@@ -5760,7 +5760,12 @@ def get_paper_questions(ids: str = "", db: Session = Depends(get_db)):
             return {"status": "success", "data": []}
         questions = db.query(Question).filter(Question.id.in_(id_list)).all()
         q_map = {q.id: q.to_dict() for q in questions}
-        result = [q_map[qid] for qid in id_list if qid in q_map]
+        seq_map = get_seq_mapping(db, id_list)
+        result = [
+            {**q_map[qid], "seq_num": seq_map.get(qid)}
+            for qid in id_list
+            if qid in q_map
+        ]
         return {"status": "success", "data": result}
     except Exception as e:
         return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
@@ -5934,6 +5939,69 @@ def delete_paper(paper_id: int, background_tasks: BackgroundTasks, db: Session =
         db.rollback()
         return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
 
+
+class PaperExportValidationError(ValueError):
+    """Raised when a paper export request cannot describe a complete paper."""
+
+
+def _prepare_paper_export_questions(questions_input, db: Session) -> list[dict]:
+    """Validate an export cart and hydrate every referenced question in order."""
+    if not isinstance(questions_input, list) or not questions_input:
+        raise PaperExportValidationError("卷面为空，试卷中至少需要包含一道题目。")
+    if len(questions_input) > 200:
+        raise PaperExportValidationError("单份试卷不能超过 200 道题。")
+
+    normalized_items = []
+    seen_question_ids = set()
+    for item in questions_input:
+        if not isinstance(item, dict):
+            raise PaperExportValidationError("试卷题目数据格式不正确。")
+        raw_question_id = item.get("id")
+        if isinstance(raw_question_id, bool):
+            raise PaperExportValidationError("试卷中包含无效的题目 ID。")
+        if isinstance(raw_question_id, int):
+            question_id = raw_question_id
+        elif isinstance(raw_question_id, str) and raw_question_id.strip().isdigit():
+            question_id = int(raw_question_id.strip())
+        else:
+            raise PaperExportValidationError("试卷中包含无效的题目 ID。")
+        if question_id <= 0:
+            raise PaperExportValidationError("试卷中包含无效的题目 ID。")
+        if question_id in seen_question_ids:
+            raise PaperExportValidationError("同一道题不能在一份试卷中重复出现。")
+        seen_question_ids.add(question_id)
+        normalized_items.append((item, question_id))
+
+    questions_db = db.query(Question).filter(
+        Question.id.in_(seen_question_ids)
+    ).all()
+    question_map = {question.id: question.to_dict() for question in questions_db}
+    if seen_question_ids - set(question_map):
+        raise PaperExportValidationError("试卷中包含已删除或不存在的题目。")
+
+    questions_data = []
+    for item, question_id in normalized_items:
+        question_data = dict(question_map[question_id])
+        if item.get("figure_align"):
+            question_data["figure_align"] = item.get("figure_align")
+        if isinstance(item.get("figure_align_custom"), bool):
+            question_data["figure_align_custom"] = item.get("figure_align_custom")
+        if (
+            isinstance(item.get("figure_size"), str)
+            and item.get("figure_size") in FIGURE_SIZE_VALUES
+        ):
+            question_data["figure_size"] = item.get("figure_size")
+        try:
+            score = int(item.get("score", 5))
+        except (TypeError, ValueError) as exc:
+            raise PaperExportValidationError("试卷中包含无效的题目分值。") from exc
+        export_item = {"question": question_data, "score": score}
+        if item.get("solution_space") is not None:
+            export_item["solution_space"] = item.get("solution_space")
+        questions_data.append(export_item)
+    return questions_data
+
+
 @app.post("/api/paper/export/tex")
 def export_paper_tex(payload: dict, db: Session = Depends(get_db)):
     """导出 LaTeX 源码 ZIP 压缩包"""
@@ -5944,29 +6012,7 @@ def export_paper_tex(payload: dict, db: Session = Depends(get_db)):
         show_secret = payload.get("show_secret", True)
         show_notice = payload.get("show_notice", True)
         questions_input = payload.get("questions", [])
-        
-        q_ids = [int(q.get("id")) for q in questions_input if q.get("id")]
-        questions_db = db.query(Question).filter(Question.id.in_(q_ids)).all()
-        q_map = {q.id: q.to_dict() for q in questions_db}
-        
-        questions_data = []
-        for item in questions_input:
-            qid = int(item.get("id"))
-            if qid in q_map:
-                q_dict = dict(q_map[qid])
-                if item.get("figure_align"):
-                    q_dict["figure_align"] = item.get("figure_align")
-                if isinstance(item.get("figure_align_custom"), bool):
-                    q_dict["figure_align_custom"] = item.get("figure_align_custom")
-                if isinstance(item.get("figure_size"), str) and item.get("figure_size") in FIGURE_SIZE_VALUES:
-                    q_dict["figure_size"] = item.get("figure_size")
-                q_item = {
-                    "question": q_dict,
-                    "score": int(item.get("score", 5))
-                }
-                if item.get("solution_space"):
-                    q_item["solution_space"] = item.get("solution_space")
-                questions_data.append(q_item)
+        questions_data = _prepare_paper_export_questions(questions_input, db)
                 
         tex_main = build_latex_document(title, subtitle, paper_type, questions_data, include_answers=False, show_secret=show_secret, show_notice=show_notice)
         tex_ans = build_latex_document(title + " (参考答案与解析)", subtitle, paper_type, questions_data, include_answers=True, show_secret=show_secret, show_notice=show_notice)
@@ -5985,6 +6031,8 @@ def export_paper_tex(payload: dict, db: Session = Depends(get_db)):
         return Response(content=zip_bytes, media_type="application/zip", headers={
             "Content-Disposition": f"attachment; filename=\"paper_export.zip\"; filename*=utf-8''{encoded_filename}"
         })
+    except PaperExportValidationError as e:
+        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=400)
     except Exception as e:
         return JSONResponse(content={"status": "error", "message": f"生成 LaTeX 源码失败: {str(e)}"}, status_code=500)
 
@@ -5998,29 +6046,7 @@ def export_paper_bundle(payload: dict, db: Session = Depends(get_db)):
         show_secret = payload.get("show_secret", True)
         show_notice = payload.get("show_notice", True)
         questions_input = payload.get("questions", [])
-        
-        q_ids = [int(q.get("id")) for q in questions_input if q.get("id")]
-        questions_db = db.query(Question).filter(Question.id.in_(q_ids)).all()
-        q_map = {q.id: q.to_dict() for q in questions_db}
-        
-        questions_data = []
-        for item in questions_input:
-            qid = int(item.get("id"))
-            if qid in q_map:
-                q_dict = dict(q_map[qid])
-                if item.get("figure_align"):
-                    q_dict["figure_align"] = item.get("figure_align")
-                if isinstance(item.get("figure_align_custom"), bool):
-                    q_dict["figure_align_custom"] = item.get("figure_align_custom")
-                if isinstance(item.get("figure_size"), str) and item.get("figure_size") in FIGURE_SIZE_VALUES:
-                    q_dict["figure_size"] = item.get("figure_size")
-                q_item = {
-                    "question": q_dict,
-                    "score": int(item.get("score", 5))
-                }
-                if item.get("solution_space"):
-                    q_item["solution_space"] = item.get("solution_space")
-                questions_data.append(q_item)
+        questions_data = _prepare_paper_export_questions(questions_input, db)
                 
         tex_main = build_latex_document(title, subtitle, paper_type, questions_data, include_answers=False, show_secret=show_secret, show_notice=show_notice)
         tex_ans = build_latex_document(title + " (参考答案与解析)", subtitle, paper_type, questions_data, include_answers=True, show_secret=show_secret, show_notice=show_notice)
@@ -6055,6 +6081,8 @@ def export_paper_bundle(payload: dict, db: Session = Depends(get_db)):
         return Response(content=zip_bytes, media_type="application/zip", headers={
             "Content-Disposition": f"attachment; filename=\"paper_bundle.zip\"; filename*=utf-8''{encoded_filename}"
         })
+    except PaperExportValidationError as e:
+        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=400)
     except Exception as e:
         return JSONResponse(content={"status": "error", "message": f"生成全套合并包失败: {str(e)}"}, status_code=500)
 
@@ -6121,29 +6149,7 @@ def export_paper_pdf(payload: dict, db: Session = Depends(get_db)):
         show_secret = payload.get("show_secret", True)
         show_notice = payload.get("show_notice", True)
         questions_input = payload.get("questions", [])
-        
-        q_ids = [int(q.get("id")) for q in questions_input if q.get("id")]
-        questions_db = db.query(Question).filter(Question.id.in_(q_ids)).all()
-        q_map = {q.id: q.to_dict() for q in questions_db}
-        
-        questions_data = []
-        for item in questions_input:
-            qid = int(item.get("id"))
-            if qid in q_map:
-                q_dict = dict(q_map[qid])
-                if item.get("figure_align"):
-                    q_dict["figure_align"] = item.get("figure_align")
-                if isinstance(item.get("figure_align_custom"), bool):
-                    q_dict["figure_align_custom"] = item.get("figure_align_custom")
-                if isinstance(item.get("figure_size"), str) and item.get("figure_size") in FIGURE_SIZE_VALUES:
-                    q_dict["figure_size"] = item.get("figure_size")
-                q_item = {
-                    "question": q_dict,
-                    "score": int(item.get("score", 5))
-                }
-                if item.get("solution_space"):
-                    q_item["solution_space"] = item.get("solution_space")
-                questions_data.append(q_item)
+        questions_data = _prepare_paper_export_questions(questions_input, db)
                 
         if target == "sheet":
             tex_content = build_answer_sheet_latex(title, subtitle, questions_data)
@@ -6168,6 +6174,8 @@ def export_paper_pdf(payload: dict, db: Session = Depends(get_db)):
                 },
                 status_code=400,
             )
+    except PaperExportValidationError as e:
+        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=400)
     except Exception as e:
         return JSONResponse(content={"status": "error", "message": f"编译 PDF 异常: {str(e)}"}, status_code=500)
 
@@ -6215,36 +6223,7 @@ def export_paper_word(payload: dict, db: Session = Depends(get_db)):
         questions_input = payload.get("questions", [])
         as_single_docx = bool(payload.get("as_single_docx", False))
         include_answers = bool(payload.get("include_answers", False))
-
-        q_ids = [int(q.get("id")) for q in questions_input if q.get("id")]
-        questions_db = db.query(Question).filter(Question.id.in_(q_ids)).all()
-        q_map = {q.id: q.to_dict() for q in questions_db}
-
-        questions_data = []
-        for item in questions_input:
-            qid = int(item.get("id"))
-            if qid not in q_map:
-                continue
-            q_dict = dict(q_map[qid])
-            if item.get("figure_align"):
-                q_dict["figure_align"] = item.get("figure_align")
-            if isinstance(item.get("figure_align_custom"), bool):
-                q_dict["figure_align_custom"] = item.get("figure_align_custom")
-            if isinstance(item.get("figure_size"), str) and item.get("figure_size") in FIGURE_SIZE_VALUES:
-                q_dict["figure_size"] = item.get("figure_size")
-            q_item = {
-                "question": q_dict,
-                "score": int(item.get("score", 5)),
-            }
-            if item.get("solution_space") is not None:
-                q_item["solution_space"] = item.get("solution_space")
-            questions_data.append(q_item)
-
-        if not questions_data:
-            return JSONResponse(
-                content={"status": "error", "message": "卷面为空，无法导出 Word。"},
-                status_code=400,
-            )
+        questions_data = _prepare_paper_export_questions(questions_input, db)
 
         from urllib.parse import quote
         safe_title = re.sub(r'[/\\?%*:|"<>]', "_", title.strip()) or "试卷"
@@ -6312,6 +6291,10 @@ def export_paper_word(payload: dict, db: Session = Depends(get_db)):
                 "X-Word-Missing-Images": str(main_diag.get("missing_images", 0) + ans_diag.get("missing_images", 0)),
                 "X-Word-Answer-Card-Omitted": "1" if main_diag.get("answer_card_omitted") else "0",
             },
+        )
+    except PaperExportValidationError as e:
+        return JSONResponse(
+            content={"status": "error", "message": str(e)}, status_code=400
         )
     except Exception as e:
         return JSONResponse(

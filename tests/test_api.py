@@ -747,6 +747,57 @@ def test_paper_export_routes_forward_request_figure_size(client, db_session):
         assert exported_question["figure_size"] == "large"
 
 
+@pytest.mark.parametrize(
+    "endpoint",
+    (
+        "/api/paper/export/tex",
+        "/api/paper/export/bundle",
+        "/api/paper/export/pdf",
+        "/api/paper/export/word",
+    ),
+)
+def test_paper_export_routes_reject_incomplete_question_lists_before_building(
+    client, db_session, endpoint
+):
+    question = Question(content="导出输入校验题", question_type="detailed_answer")
+    db_session.add(question)
+    db_session.commit()
+    headers = {"X-Local-Token": LOCAL_TOKEN}
+    invalid_cases = (
+        ([], "至少需要包含一道题目"),
+        ([{"id": question.id}, {"id": question.id}], "不能在一份试卷中重复"),
+        ([{"id": question.id + 100000}], "已删除或不存在"),
+        ([{"id": "not-an-id"}], "无效的题目 ID"),
+    )
+
+    with (
+        patch(
+            "main.build_latex_document",
+            side_effect=AssertionError("invalid request reached LaTeX builder"),
+        ) as latex_builder,
+        patch(
+            "main.build_answer_sheet_latex",
+            side_effect=AssertionError("invalid request reached answer sheet builder"),
+        ) as answer_sheet_builder,
+        patch(
+            "main.build_word_document",
+            side_effect=AssertionError("invalid request reached Word builder"),
+        ) as word_builder,
+    ):
+        for questions, expected_message in invalid_cases:
+            response = client.post(
+                endpoint,
+                json={"title": "输入校验", "questions": questions},
+                headers=headers,
+            )
+            assert response.status_code == 400, (endpoint, response.text)
+            assert expected_message in response.json()["message"]
+
+    latex_builder.assert_not_called()
+    answer_sheet_builder.assert_not_called()
+    word_builder.assert_not_called()
+
+
 def test_question_persists_editable_tikz_assets_and_original_reference(client):
     headers = {"X-Local-Token": LOCAL_TOKEN}
     tiny_png = base64.b64decode(

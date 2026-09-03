@@ -33,6 +33,7 @@ def test_paper_api_flow(client):
     assert fetch_res.status_code == 200
     assert len(fetch_res.json()["data"]) == 1
     assert fetch_res.json()["data"][0]["id"] == q_id
+    assert fetch_res.json()["data"][0]["seq_num"] == 1
     
     # 3. Save Paper & verify usage_count increment
     paper_payload = {
@@ -181,7 +182,7 @@ def test_invalid_paper_items_are_rejected_without_partial_rows(
     db_session.refresh(question)
     assert question.usage_count in {None, 0}
 
-def test_exam_19_and_answer_sheet_generation(client):
+def test_exam_19_and_answer_sheet_generation(client, db_session):
     headers = {"X-Local-Token": LOCAL_TOKEN}
     
     from mathbank.paper_helper import build_answer_sheet_latex
@@ -202,13 +203,19 @@ def test_exam_19_and_answer_sheet_generation(client):
     assert "2026年模拟考试试卷" in sheet_tex
     assert "15.（13分）" in sheet_tex
     assert "\\begin{tikzpicture}" in sheet_tex
-    
+
     # Test export endpoints for exam_19
+    question = Question(
+        content="求证：$\\sin^2 x + \\cos^2 x = 1$。",
+        question_type="detailed_answer",
+    )
+    db_session.add(question)
+    db_session.commit()
     paper_payload = {
         "title": "2026年高考模拟试卷",
         "subtitle": "数学",
         "paper_type": "exam_19",
-        "questions": []
+        "questions": [{"id": question.id, "score": 13}],
     }
     
     export_res = client.post("/api/paper/export/tex", json=paper_payload, headers=headers)
@@ -220,7 +227,7 @@ def test_exam_19_and_answer_sheet_generation(client):
         "subtitle": "数学",
         "paper_type": "exam_19",
         "target": "sheet",
-        "questions": []
+        "questions": [{"id": question.id, "score": 13}],
     }
     # The endpoint contract should not depend on XeLaTeX being installed on
     # the CI runner; compilation behavior has separate focused tests.

@@ -1332,6 +1332,679 @@ def test_sidebar_uses_server_pagination_and_latest_request_wins():
     assert "questions.slice(" not in load_source
 
 
+def test_paper_bank_stream_uses_server_pagination_and_latest_request_wins():
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+    fetch_start = paper_source.index("let bankQuestionsAbortController = null;")
+    fetch_end = paper_source.index("// Render Full Paper Workspace", fetch_start)
+    fetch_source = paper_source[fetch_start:fetch_end]
+    filter_start = paper_source.index("let filterDebounceTimer = null;")
+    filter_end = paper_source.index("function syncCanvasHeaderMeta", filter_start)
+    filter_source = paper_source[filter_start:filter_end]
+
+    for marker in (
+        "const PAPER_STREAM_PAGE_SIZE = 15",
+        "params.set('page', String(targetPage))",
+        "params.set('page_size', String(PAPER_STREAM_PAGE_SIZE))",
+        "params.set('sort', 'desc')",
+        "const requestSeq = ++bankQuestionsRequestSeq",
+        "bankQuestionsAbortController.abort()",
+        "requestSeq !== bankQuestionsRequestSeq",
+        "signal: controller.signal",
+        "e.name === 'AbortError'",
+        "payload && Array.isArray(payload.items)",
+        "pagination.total =",
+        "pagination.totalPages =",
+    ):
+        assert marker in paper_source
+
+    assert "const allPagination = window.PaperStore.streamPagination.all" in filter_source
+    assert "allPagination.page = 1" in filter_source
+    assert "allPagination.total = null" in filter_source
+    assert "cancelBankQuestionsFetch()" in filter_source
+    assert "fetchBankQuestions(1)" in filter_source
+
+    node = shutil.which("node")
+    assert node, "Node.js is required for the frontend executable regression"
+    script = r'''
+const PAPER_STREAM_PAGE_SIZE = 15;
+const controllers = [];
+class TestAbortController {
+  constructor() {
+    this.signal = { aborted: false };
+    controllers.push(this);
+  }
+  abort() { this.signal.aborted = true; }
+}
+global.AbortController = TestAbortController;
+global.window = {
+  PaperStore: {
+    cart: [],
+    filters: {
+      compulsory: '', chapter: '', knowledge: '', question_type: '',
+      difficulty: '', keyword: '', tab: 'all'
+    },
+    bankQuestions: [],
+    streamPagination: {
+      all: { page: 1, total: null, totalPages: 1, loading: false, error: '', retryPage: 1 },
+      selected: { page: 1 }
+    },
+    cartQuestionLoad: { loading: false, error: '', missingIds: [] },
+    questionsMap: {},
+    answerCache: Object.create(null)
+  }
+};
+function snapshotFigureLayoutsForBankFetch() { return {}; }
+function preserveNewerFigureLayout() {}
+function seedPaperAnswerCache(question) {
+  if (question && typeof question.answer_markdown === 'string') {
+    window.PaperStore.answerCache[question.id] = question.answer_markdown;
+  }
+}
+function renderPart3QuestionStream() {}
+window.renderPaperCanvas = function() {};
+global.console = { ...console, error() {} };
+
+function deferred() {
+  let resolve;
+  const promise = new Promise(res => { resolve = res; });
+  return { promise, resolve };
+}
+function response(body) {
+  return { ok: true, json: async () => body };
+}
+const fetchCalls = [];
+global.fetch = (url, options = {}) => {
+  const pending = deferred();
+  fetchCalls.push({ url, options, pending });
+  return pending.promise;
+};
+''' + fetch_source + r'''
+
+(async () => {
+  const first = fetchBankQuestions(2);
+  const second = fetchBankQuestions(3);
+  if (fetchCalls.length !== 2) {
+    throw new Error(`expected two bank requests, got ${fetchCalls.length}`);
+  }
+  if (!controllers[0].signal.aborted || controllers[1].signal.aborted) {
+    throw new Error('new bank request did not abort only the previous request');
+  }
+  for (const [index, expectedPage] of [[0, '2'], [1, '3']]) {
+    const url = new URL(fetchCalls[index].url, 'http://mathbank.local');
+    if (url.searchParams.get('page') !== expectedPage ||
+        url.searchParams.get('page_size') !== '15' ||
+        url.searchParams.get('sort') !== 'desc') {
+      throw new Error(`bad paginated bank URL: ${url}`);
+    }
+    if (fetchCalls[index].options.signal !== controllers[index].signal) {
+      throw new Error(`request ${index} did not receive its abort signal`);
+    }
+  }
+
+  fetchCalls[1].pending.resolve(response({
+    items: [{ id: 30, content: 'new page' }],
+    total: 34,
+    page: 3,
+    page_size: 15,
+    total_pages: 3
+  }));
+  if (await second !== true) throw new Error('latest response was not accepted');
+  fetchCalls[0].pending.resolve(response({
+    items: [{ id: 20, content: 'stale page' }],
+    total: 34,
+    page: 2,
+    page_size: 15,
+    total_pages: 3
+  }));
+  if (await first !== false) throw new Error('stale response was not rejected');
+
+  const store = window.PaperStore;
+  if (store.bankQuestions.length !== 1 || store.bankQuestions[0].id !== 30 ||
+      store.streamPagination.all.page !== 3 ||
+      store.streamPagination.all.total !== 34 ||
+      store.streamPagination.all.totalPages !== 3) {
+    throw new Error(`stale response changed current page: ${JSON.stringify(store)}`);
+  }
+
+  const detailCalls = [];
+  store.cart = [{ id: 30 }, { id: 77 }, { id: 77 }];
+  store.streamPagination.selected.page = 9;
+  global.fetch = async (url) => {
+    detailCalls.push(url);
+    return response({
+      status: 'success',
+      data: [{ id: 77, content: 'restored cart question', answer_markdown: '' }]
+    });
+  };
+  await ensureCartQuestionsLoaded();
+  if (detailCalls.length !== 1 || detailCalls[0] !== '/api/paper/questions?ids=77') {
+    throw new Error(`missing cart details were not deduplicated: ${JSON.stringify(detailCalls)}`);
+  }
+  if (!store.questionsMap[77] || store.streamPagination.selected.page !== 1) {
+    throw new Error(`cart detail or selected-page clamp failed: ${JSON.stringify(store)}`);
+  }
+})().catch(error => {
+  process.stderr.write(String(error.stack || error));
+  process.exitCode = 1;
+});
+'''
+    result = subprocess.run(
+        [node, "-e", script],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_paper_cart_full_revalidation_separates_missing_from_transient_failure_and_preserves_layout():
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+    state_start = paper_source.index("let bankQuestionsAbortController = null;")
+    state_end = paper_source.index("// Fetch one server-paginated page", state_start)
+    state_source = paper_source[state_start:state_end]
+    layout_start = paper_source.index("const figureLayoutWrites = Object.create(null);")
+    layout_end = paper_source.index("function getFigureLayoutWriteState", layout_start)
+    layout_source = paper_source[layout_start:layout_end]
+
+    for marker in (
+        "const idsToLoad = revalidateAll ? cartIds : missingIds",
+        "const protectedFigureLayouts = snapshotFigureLayoutsForBankFetch()",
+        "preserveNewerFigureLayout(question, protectedFigureLayouts)",
+        "confirmedMissingIds.add(qid)",
+        "failedIds.add(qid)",
+        "delete window.PaperStore.questionsMap[qid]",
+        "await ensureCartQuestionsLoaded({ revalidateAll: true })",
+    ):
+        assert marker in paper_source
+
+    node = shutil.which("node")
+    assert node, "Node.js is required for the frontend executable regression"
+    script = r'''
+const PAPER_STREAM_PAGE_SIZE = 15;
+const calls = [];
+let resolveFirst;
+const firstResponse = new Promise(resolve => { resolveFirst = resolve; });
+global.window = {
+  PaperStore: {
+    cart: [{ id: 1, score: 5 }],
+    questionsMap: {
+      1: {
+        id: 1,
+        content: 'cached question',
+        figure_align: 'right',
+        figure_align_custom: true,
+        figure_size: 'small'
+      }
+    },
+    streamPagination: {
+      all: { page: 1, total: 1, totalPages: 1, loading: false, error: '', retryPage: 1 },
+      selected: { page: 1 }
+    },
+    cartQuestionLoad: {
+      loading: false,
+      error: '',
+      missingIds: [],
+      confirmedMissingIds: [],
+      failedIds: []
+    },
+    expandedAnswerIds: new Set([1]),
+    answerErrors: { 1: 'old error' },
+    answerCache: { 1: 'old answer' }
+  }
+};
+function seedPaperAnswerCache() {}
+function renderPart3QuestionStream() {}
+window.renderPaperCanvas = function() {};
+function getQuestionFigSize(question) {
+  return ['auto', 'small', 'medium', 'large'].includes(question && question.figure_size)
+    ? question.figure_size
+    : 'auto';
+}
+let fetchMode = 'layout-race';
+global.fetch = async (url) => {
+  calls.push(String(url));
+  if (fetchMode === 'layout-race') return firstResponse;
+  if (fetchMode === 'temporary-failure') {
+    return { ok: false, status: 503, json: async () => ({}) };
+  }
+  return {
+    ok: true,
+    json: async () => ({ status: 'success', data: [] })
+  };
+};
+global.console = { ...console, error() {} };
+''' + state_source + '\n' + layout_source + r'''
+
+(async () => {
+  const layoutRace = ensureCartQuestionsLoaded({ revalidateAll: true });
+  if (calls[0] !== '/api/paper/questions?ids=1') {
+    throw new Error(`cached cart ID was not revalidated: ${JSON.stringify(calls)}`);
+  }
+  window.PaperStore.questionsMap[1].figure_align = 'bottom_right';
+  window.PaperStore.questionsMap[1].figure_size = 'large';
+  figureLayoutMutationRevision[1] = 1;
+  resolveFirst({
+    ok: true,
+    json: async () => ({
+      status: 'success',
+      data: [{
+        id: 1,
+        content: 'server question',
+        figure_align: 'right',
+        figure_align_custom: true,
+        figure_size: 'small'
+      }]
+    })
+  });
+  if (await layoutRace !== true ||
+      window.PaperStore.questionsMap[1].figure_align !== 'bottom_right' ||
+      window.PaperStore.questionsMap[1].figure_size !== 'large') {
+    throw new Error('cart hydration overwrote a newer figure layout');
+  }
+
+  fetchMode = 'temporary-failure';
+  if (await ensureCartQuestionsLoaded({ revalidateAll: true }) !== false) {
+    throw new Error('temporary validation failure was reported as complete');
+  }
+  let state = window.PaperStore.cartQuestionLoad;
+  if (!window.PaperStore.questionsMap[1] ||
+      state.confirmedMissingIds.length !== 0 ||
+      state.failedIds.length !== 1 || state.failedIds[0] !== 1 ||
+      !state.error.includes('暂未通过服务端核验')) {
+    throw new Error(`temporary failure was misclassified: ${JSON.stringify(state)}`);
+  }
+
+  fetchMode = 'confirmed-missing';
+  if (await ensureCartQuestionsLoaded({ revalidateAll: true }) !== false) {
+    throw new Error('confirmed missing question was reported as complete');
+  }
+  state = window.PaperStore.cartQuestionLoad;
+  if (window.PaperStore.questionsMap[1] ||
+      state.confirmedMissingIds.length !== 1 || state.confirmedMissingIds[0] !== 1 ||
+      state.failedIds.length !== 0 ||
+      !state.error.includes('已删除或不存在')) {
+    throw new Error(`confirmed missing question was not isolated: ${JSON.stringify(state)}`);
+  }
+})().catch(error => {
+  process.stderr.write(String(error.stack || error));
+  process.exitCode = 1;
+});
+'''
+    result = subprocess.run(
+        [node, "-e", script],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_paper_selected_stream_paginates_with_full_cart_indexes_and_total_counts():
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+    state_start = paper_source.index("function clampPaperStreamPage")
+    state_end = paper_source.index("function cancelBankQuestionsFetch", state_start)
+    state_source = paper_source[state_start:state_end]
+    render_start = paper_source.index("function getPaperStreamPageNumbers")
+    render_end = paper_source.index("// Render Part 4", render_start)
+    render_source = paper_source[render_start:render_end]
+
+    for marker in (
+        ".slice(startIndex, startIndex + PAPER_STREAM_PAGE_SIZE)",
+        "cartIndex: startIndex + pageIndex",
+        "window.movePaperQuestion(${cartIndex}, 'up')",
+        "window.movePaperQuestion(${cartIndex}, 'down')",
+        "cartIndex === cart.length - 1",
+        "全库试题 (${Number.isInteger(pagination.all.total) ? pagination.all.total : '—'})",
+        "renderPaperStreamPagination(currentTab, currentPage, total, totalPages)",
+        "共 ${safeTotal} 题 / ${safeTotalPages} 页",
+    ):
+        assert marker in paper_source
+
+    node = shutil.which("node")
+    assert node, "Node.js is required for the frontend executable regression"
+    script = r'''
+const PAPER_STREAM_PAGE_SIZE = 15;
+const container = {
+  innerHTML: '',
+  scrollTop: 41,
+  attributes: {},
+  setAttribute(name, value) { this.attributes[name] = value; }
+};
+const cart = Array.from({ length: 23 }, (_, index) => ({ id: index + 1, score: 5 }));
+const questionsMap = Object.fromEntries(cart.map(item => [item.id, {
+  id: item.id,
+  seq_num: item.id,
+  content: `question-${item.id}`,
+  question_type: 'single_choice',
+  difficulty: 'easy',
+  usage_count: 0,
+  has_answer: false
+}]));
+global.window = {
+  PaperStore: {
+    cart,
+    bankQuestions: Array.from({ length: 15 }, (_, index) => ({
+      id: 100 + index,
+      seq_num: 100 + index,
+      content: `bank-${index}`,
+      question_type: 'single_choice',
+      difficulty: 'easy',
+      usage_count: 0,
+      has_answer: false
+    })),
+    questionsMap,
+    filters: { tab: 'selected' },
+    streamPagination: {
+      all: { page: 2, total: 47, totalPages: 4, loading: false, error: '', retryPage: 2 },
+      selected: { page: 99 }
+    },
+    cartQuestionLoad: { loading: false, error: '', missingIds: [] },
+    expandedAnswerIds: new Set(),
+    answerLoadingIds: new Set(),
+    answerErrors: Object.create(null),
+    answerCache: Object.create(null)
+  },
+  isInCart(qid) { return this.PaperStore.cart.some(item => item.id === qid); },
+  changePaperStreamPage() {},
+  togglePaperQuestionAnswer() {},
+  collapseAllPaperAnswers() {},
+  clearCart() {},
+  updatePaperQuestionScore() {},
+  movePaperQuestion() {},
+  removeFromCart() {},
+  addToCart() {}
+};
+global.document = {
+  getElementById(id) { return id === 'paperQuestionStream' ? container : null; }
+};
+function ensureCartQuestionsLoaded() { return Promise.resolve(); }
+function fetchBankQuestions() { return Promise.resolve(true); }
+function getQuestionTypeCn() { return '单选题'; }
+function getDifficultyBadge() { return ''; }
+function seedPaperAnswerCache() {}
+function hasCachedPaperAnswer() { return false; }
+function escapeHtml(value) { return String(value); }
+function formatQuestionContentHtml(content, qid) { return `<span>render-${qid}</span>`; }
+function getQuestionFigAlign() { return 'right'; }
+function getQuestionFigSize() { return 'auto'; }
+function initializeAutoFigureSizing() {}
+''' + state_source + '\n' + render_source + r'''
+
+renderPart3QuestionStream();
+let html = container.innerHTML;
+if (window.PaperStore.streamPagination.selected.page !== 2) {
+  throw new Error('selected page was not clamped to the last page');
+}
+for (const qid of [16, 21, 22, 23]) {
+  if (!html.includes(`id="paper-q-render-${qid}"`)) {
+    throw new Error(`selected last page omitted question ${qid}`);
+  }
+}
+if (html.includes('id="paper-q-render-15"') ||
+    !html.includes('全库试题 (47)') ||
+    !html.includes('已选试题 (23)') ||
+    !html.includes('共 23 题 / 2 页')) {
+  throw new Error('selected page boundaries or total labels are wrong');
+}
+if (!html.includes("movePaperQuestion(15, 'up')") ||
+    !html.includes("movePaperQuestion(22, 'down')") ||
+    !/movePaperQuestion\(22, 'down'\)" disabled/.test(html)) {
+  throw new Error('selected page did not retain full-cart reorder indexes');
+}
+
+window.PaperStore.filters.tab = 'all';
+renderPart3QuestionStream();
+html = container.innerHTML;
+if (!html.includes('全库试题 (47)') || !html.includes('共 47 题 / 4 页') ||
+    !html.includes('aria-current="page"')) {
+  throw new Error('all-bank tab rendered page length instead of server totals');
+}
+
+window.PaperStore.cart = window.PaperStore.cart.slice(0, 5);
+window.PaperStore.filters.tab = 'selected';
+window.PaperStore.streamPagination.selected.page = 3;
+renderPart3QuestionStream();
+html = container.innerHTML;
+if (window.PaperStore.streamPagination.selected.page !== 1 ||
+    !html.includes('id="paper-q-render-1"') ||
+    html.includes('id="paper-q-render-6"') ||
+    !html.includes('共 5 题 / 1 页')) {
+  throw new Error('selected page did not clamp after cart shrink');
+}
+'''
+    result = subprocess.run(
+        [node, "-e", script],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_paper_cart_actions_reject_changed_hydration_snapshot_and_are_single_flight():
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+    state_start = paper_source.index("let bankQuestionsAbortController = null;")
+    state_end = paper_source.index("// Fetch one server-paginated page", state_start)
+    state_source = paper_source[state_start:state_end]
+    save_start = paper_source.index("window.savePaperToDb = async function")
+    save_end = paper_source.index("// ----------------- Saved Papers", save_start)
+    save_source = paper_source[save_start:save_end]
+
+    for marker in (
+        "const paperActionInFlight = new Set()",
+        "function getPaperCartSignature()",
+        "function beginPaperAction(actionKey, actionLabel)",
+        "function finishPaperAction(actionKey)",
+        "isPaperCartSnapshotCurrent(expectedSignature, actionLabel)",
+        "beginPaperAction(actionKey, `导出${targetName} PDF`)",
+        "beginPaperAction(actionKey, '导出 Word 试卷')",
+        "beginPaperAction(actionKey, '打包导出 LaTeX 资源')",
+        "beginPaperAction(actionKey, '保存试卷')",
+        "beginPaperAction(actionKey, '导出历史试卷 PDF')",
+        "ensurePaperCartReady(`导出${targetName} PDF`, expectedCartSignature)",
+        "ensurePaperCartReady('导出 Word 试卷', expectedCartSignature)",
+        "ensurePaperCartReady('打包导出 LaTeX 资源', expectedCartSignature)",
+        "ensurePaperCartReady('保存试卷', expectedCartSignature)",
+        "const complete = await ensureCartQuestionsLoaded({ revalidateAll: true })",
+    ):
+        assert marker in paper_source
+    assert paper_source.count("finishPaperAction(actionKey);") == 5
+
+    node = shutil.which("node")
+    assert node, "Node.js is required for the frontend executable regression"
+    script = r'''
+const PAPER_STREAM_PAGE_SIZE = 15;
+const toasts = [];
+global.window = {
+  PaperStore: {
+    cart: [{ id: 1, score: 5 }],
+    meta: {
+      title: 'race test', subtitle: '', paper_type: 'exam',
+      show_notice: true, show_secret: true, solution_space_default: '7.0'
+    },
+    questionsMap: {},
+    streamPagination: {
+      all: { page: 1, total: 2, totalPages: 1, loading: false, error: '', retryPage: 1 },
+      selected: { page: 1 }
+    },
+    cartQuestionLoad: { loading: false, error: '', missingIds: [] }
+  },
+  showToast(message, type) { toasts.push({ message, type }); },
+  renderPaperCanvas() {}
+};
+function renderPart3QuestionStream() {}
+function seedPaperAnswerCache() {}
+function snapshotFigureLayoutsForBankFetch() { return {}; }
+function preserveNewerFigureLayout() {}
+function deferred() {
+  let resolve;
+  const promise = new Promise(res => { resolve = res; });
+  return { promise, resolve };
+}
+const hydration = deferred();
+let hydrateCalls = 0;
+let saveCalls = 0;
+global.fetch = (url) => {
+  if (String(url).startsWith('/api/paper/questions?')) {
+    hydrateCalls += 1;
+    if (hydrateCalls === 1) return hydration.promise;
+    return Promise.resolve({
+      ok: true,
+      json: async () => ({ status: 'success', data: [{ id: 2, content: 'current question' }] })
+    });
+  }
+  if (url === '/api/paper/save') {
+    saveCalls += 1;
+    return Promise.resolve({ json: async () => ({ status: 'success' }) });
+  }
+  throw new Error(`unexpected fetch: ${url}`);
+};
+''' + state_source + '\n' + save_source + r'''
+
+(async () => {
+  const firstSave = window.savePaperToDb();
+  const duplicateSave = window.savePaperToDb();
+  if (hydrateCalls !== 1) throw new Error(`duplicate save started ${hydrateCalls} hydrations`);
+
+  window.PaperStore.cart = [{ id: 2, score: 8 }];
+  hydration.resolve({
+    ok: true,
+    json: async () => ({ status: 'success', data: [{ id: 1, content: 'old question' }] })
+  });
+  await Promise.all([firstSave, duplicateSave]);
+  if (saveCalls !== 0) throw new Error('changed cart snapshot was saved after hydration');
+  if (!toasts.some(item => item.message.includes('正在进行'))) {
+    throw new Error('duplicate save was not reported as single-flight');
+  }
+  if (!toasts.some(item => item.message.includes('卷面题目已变化'))) {
+    throw new Error('changed hydration snapshot was not reported');
+  }
+
+  window.PaperStore.questionsMap[2] = { id: 2, content: 'current question' };
+  await window.savePaperToDb();
+  if (hydrateCalls !== 2 || saveCalls !== 1) {
+    throw new Error('action lock was not released or cached cart was not revalidated');
+  }
+})().catch(error => {
+  process.stderr.write(String(error.stack || error));
+  process.exitCode = 1;
+});
+'''
+    result = subprocess.run(
+        [node, "-e", script],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_paper_missing_question_recovery_removes_only_confirmed_missing_items():
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+    storage_start = paper_source.index("function saveCartToStorage()")
+    storage_end = paper_source.index("function saveMetaToStorage()", storage_start)
+    storage_source = paper_source[storage_start:storage_end]
+    state_start = paper_source.index("let bankQuestionsAbortController = null;")
+    state_end = paper_source.index("// Fetch one server-paginated page", state_start)
+    state_source = paper_source[state_start:state_end]
+    removal_start = paper_source.index("window.removeMissingPaperCartQuestions = function")
+    removal_end = paper_source.index("window.changePaperStreamPage = async function", removal_start)
+    removal_source = paper_source[removal_start:removal_end]
+
+    assert "只移除确认失效题" in paper_source
+    assert "onclick=\"window.removeMissingPaperCartQuestions()\"" in paper_source
+    for marker in (
+        "(loadState.confirmedMissingIds || [])",
+        "saveCartToStorage()",
+        "clampStoredPaperStreamPages()",
+        "window.renderPaperCanvas()",
+    ):
+        assert marker in removal_source
+
+    node = shutil.which("node")
+    assert node, "Node.js is required for the frontend executable regression"
+    script = r'''
+const PAPER_STREAM_PAGE_SIZE = 15;
+const STORAGE_KEY_CART = 'mathbank_paper_cart';
+const saved = new Map();
+let streamRenders = 0;
+let canvasRenders = 0;
+const toasts = [];
+const cart = Array.from({ length: 13 }, (_, index) => ({ id: index + 1, score: 5 }));
+const questionsMap = Object.fromEntries(
+  Array.from({ length: 10 }, (_, index) => [index + 1, { id: index + 1 }])
+);
+global.localStorage = {
+  setItem(key, value) { saved.set(key, value); },
+  removeItem(key) { saved.delete(key); }
+};
+global.confirm = () => true;
+global.window = {
+  PaperStore: {
+    cart,
+    questionsMap,
+    streamPagination: {
+      all: { page: 1, total: 13, totalPages: 2, loading: false, error: '', retryPage: 1 },
+      selected: { page: 2 }
+    },
+    cartQuestionLoad: {
+      loading: false,
+      error: '有 3 道题已确认失效；有 1 道题暂未核验',
+      missingIds: [11, 12, 13],
+      confirmedMissingIds: [11, 12, 13],
+      failedIds: [5]
+    },
+    expandedAnswerIds: new Set([11]),
+    answerErrors: { 11: 'failed' },
+    answerCache: { 11: 'stale' }
+  },
+  renderPaperCanvas() { canvasRenders += 1; },
+  showToast(message, type) { toasts.push({ message, type }); }
+};
+function updateCartBadges() {}
+function renderPart3QuestionStream() { streamRenders += 1; }
+function seedPaperAnswerCache() {}
+''' + storage_source + '\n' + state_source + '\n' + removal_source + r'''
+
+window.removeMissingPaperCartQuestions();
+const store = window.PaperStore;
+if (store.cart.length !== 10 || !store.cart.some(item => item.id === 5)) {
+  throw new Error(`valid cart question was removed: ${JSON.stringify(store.cart)}`);
+}
+if (store.cart.some(item => [11, 12, 13].includes(item.id))) {
+  throw new Error(`unresolved questions remain: ${JSON.stringify(store.cart)}`);
+}
+if (store.streamPagination.selected.page !== 1 ||
+    !store.cartQuestionLoad.error.includes('暂未通过服务端核验') ||
+    store.cartQuestionLoad.missingIds.length !== 0 ||
+    store.cartQuestionLoad.confirmedMissingIds.length !== 0 ||
+    store.cartQuestionLoad.failedIds.length !== 1 ||
+    store.cartQuestionLoad.failedIds[0] !== 5) {
+  throw new Error(`recovery state was not reset: ${JSON.stringify(store)}`);
+}
+const persisted = JSON.parse(saved.get('mathbank_paper_cart'));
+if (persisted.length !== 10 || persisted.some(item => [11, 12, 13].includes(item.id))) {
+  throw new Error(`recovered cart was not persisted: ${JSON.stringify(persisted)}`);
+}
+if (streamRenders !== 1 || canvasRenders !== 1 ||
+    !toasts.some(item => item.message.includes('其他已选题目已保留'))) {
+  throw new Error('recovery did not refresh both views or report preserved questions');
+}
+'''
+    result = subprocess.run(
+        [node, "-e", script],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_word_export_prepares_pandoc_once_and_can_continue_in_compatibility_mode():
     index_source = _read(INDEX_PATH)
     paper_source = _read(STATIC_JS_DIR / "paper.js")

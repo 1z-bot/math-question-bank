@@ -6,6 +6,7 @@ import os
 import zipfile
 
 from mathbank.latex_diagnostics import build_local_latex_diagnostic
+from mathbank.database import Question
 from mathbank.paper_helper import (
     build_answer_sheet_latex,
     build_latex_document,
@@ -258,8 +259,15 @@ def test_ai_explanation_uses_parse_model_and_minimal_context():
     assert "不应发送的整份试卷机密" not in sent_context
 
 
-def test_pdf_export_failure_returns_structured_diagnostic(client):
+def test_pdf_export_failure_returns_structured_diagnostic(client, db_session):
     from main import LOCAL_TOKEN
+
+    question = Question(
+        content=r"计算 $\cancel{x}$。",
+        question_type="detailed_answer",
+    )
+    db_session.add(question)
+    db_session.commit()
 
     diagnostic = {
         "summary": "公式命令缺少支持",
@@ -275,7 +283,11 @@ def test_pdf_export_failure_returns_structured_diagnostic(client):
         with patch("main.explain_latex_compile_error", return_value=diagnostic):
             response = client.post(
                 "/api/paper/export/pdf",
-                json={"title": "错误诊断测试", "paper_type": "exam", "questions": []},
+                json={
+                    "title": "错误诊断测试",
+                    "paper_type": "exam",
+                    "questions": [{"id": question.id, "score": 5}],
+                },
                 headers={"X-Local-Token": LOCAL_TOKEN},
             )
 
