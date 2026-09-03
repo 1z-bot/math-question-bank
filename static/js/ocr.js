@@ -370,6 +370,16 @@
         // Global Esc key listener for canceling OCR & closing lightbox
         window.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' || e.key === 'Esc') {
+                const figureLayoutPopover = document.getElementById('editorFigureLayoutPopover');
+                if (figureLayoutPopover) {
+                    e.preventDefault();
+                    const returnFocus = figureLayoutPopover._returnFocus;
+                    figureLayoutPopover.remove();
+                    if (returnFocus && typeof returnFocus.focus === 'function') {
+                        returnFocus.focus({ preventScroll: true });
+                    }
+                    return;
+                }
                 const lightbox = document.getElementById('imageLightbox');
                 if (lightbox && !lightbox.classList.contains('hidden')) {
                     closeLightbox();
@@ -517,6 +527,16 @@
                     container.style.display = '';
                 }
                 images.forEach(image => {
+                    image.dataset.editorFigureLayout = 'true';
+                    image.setAttribute('role', 'button');
+                    image.setAttribute('tabindex', '0');
+                    image.setAttribute(
+                        'aria-label',
+                        `调整插图排版：${EDITOR_FIGURE_ALIGN_LABELS[layout.align]}，${EDITOR_FIGURE_SIZE_LABELS[layout.size]}`
+                    );
+                    image.setAttribute('title', '点击调整插图排版；按住 Cmd/Ctrl 点击查看原图');
+                    image.classList.remove('cursor-zoom-in');
+                    image.classList.add('cursor-pointer');
                     const wrapper = image.parentElement;
                     if (wrapper) {
                         wrapper.style.textAlign = effectiveAlign === 'center' ? 'center' : 'right';
@@ -550,8 +570,18 @@
             if (kind === 'align') {
                 window.FigureLayoutState.setAlign(value);
                 window.FigureLayoutState.setCustomAlign(true);
+                if (value === 'right' && ['medium', 'large'].includes(window.FigureLayoutState.size)) {
+                    window.FigureLayoutState.setSize('small');
+                }
             }
-            if (kind === 'size') window.FigureLayoutState.setSize(value);
+            if (kind === 'size') {
+                window.FigureLayoutState.setSize(value);
+                if (['medium', 'large'].includes(value)
+                        && window.FigureLayoutState.align === 'right') {
+                    window.FigureLayoutState.setAlign('bottom_right');
+                    window.FigureLayoutState.setCustomAlign(true);
+                }
+            }
 
             const popover = document.getElementById('editorFigureLayoutPopover');
             if (popover) popover.remove();
@@ -574,9 +604,20 @@
             const layout = currentEditorFigureLayout();
             const popover = document.createElement('div');
             popover.id = 'editorFigureLayoutPopover';
+            popover.setAttribute('role', 'dialog');
+            popover.setAttribute('aria-label', '调整插图排版');
             popover.className = 'fixed z-50 w-56 rounded-2xl border border-slate-200 bg-white/95 p-2 font-sans text-xs text-slate-700 shadow-xl backdrop-blur-md dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
-            let left = event.clientX + 5;
-            let top = event.clientY + 5;
+            const anchor = event.target && event.target.closest
+                ? event.target.closest('img[data-editor-figure-layout]')
+                : null;
+            const anchorRect = anchor ? anchor.getBoundingClientRect() : null;
+            popover._returnFocus = anchor || document.activeElement;
+            let left = event.clientX > 0
+                ? event.clientX + 5
+                : (anchorRect ? anchorRect.right + 5 : 8);
+            let top = event.clientY > 0
+                ? event.clientY + 5
+                : (anchorRect ? anchorRect.top : 8);
             if (left + 224 > window.innerWidth) left = window.innerWidth - 234;
             if (top + 205 > window.innerHeight) top = window.innerHeight - 215;
             popover.style.left = `${Math.max(8, left)}px`;
@@ -584,10 +625,12 @@
 
             const alignButtons = ['right', 'center', 'bottom_right'].map(align => `
                 <button type="button" onclick="window.setEditorFigureLayout('align', '${align}')"
+                    aria-pressed="${layout.align === align ? 'true' : 'false'}"
                     class="min-w-0 flex-1 rounded-md border px-1 py-1 text-[10px] ${layout.align === align ? 'border-brand-200 bg-brand-50 font-bold text-brand-700' : 'border-slate-200 text-slate-500 hover:border-brand-200 hover:text-brand-600 dark:border-slate-600 dark:text-slate-300'}">${EDITOR_FIGURE_ALIGN_LABELS[align].replace('题干', '').replace('下方', '')}</button>
             `).join('');
             const sizeButtons = ['auto', 'small', 'medium', 'large'].map(size => `
                 <button type="button" onclick="window.setEditorFigureLayout('size', '${size}')"
+                    aria-pressed="${layout.size === size ? 'true' : 'false'}"
                     class="min-w-0 flex-1 rounded-md border px-1 py-1 text-[10px] ${layout.size === size ? 'border-brand-200 bg-brand-50 font-bold text-brand-700' : 'border-slate-200 text-slate-500 hover:border-brand-200 hover:text-brand-600 dark:border-slate-600 dark:text-slate-300'}">${EDITOR_FIGURE_SIZE_LABELS[size]}</button>
             `).join('');
             popover.innerHTML = `
@@ -600,12 +643,14 @@
                     <div class="flex gap-1">${alignButtons}</div>
                 </div>
                 <div>
-                    <div class="mb-1 flex justify-between text-[10px] text-slate-400"><span>尺寸</span><span>右侧模式自动限宽</span></div>
+                    <div class="mb-1 flex justify-between text-[10px] text-slate-400"><span>尺寸</span><span>中/大图自动改为下方居右</span></div>
                     <div class="flex gap-1">${sizeButtons}</div>
                 </div>
                 <div class="mt-2 text-[9px] text-slate-400">随题目保存后写入题库</div>
             `;
             document.body.appendChild(popover);
+            const activeChoice = popover.querySelector('[aria-pressed="true"]');
+            if (activeChoice) activeChoice.focus({ preventScroll: true });
 
             const closeHandler = function(closeEvent) {
                 if (!popover.contains(closeEvent.target)) {
@@ -615,6 +660,31 @@
             };
             setTimeout(() => document.addEventListener('click', closeHandler), 0);
         };
+
+        function handleEditorFigureLayoutPreviewClick(event) {
+            const image = event.target && event.target.closest
+                ? event.target.closest('img[data-editor-figure-layout]')
+                : null;
+            if (!image || event.metaKey || event.ctrlKey) return;
+            event.preventDefault();
+            event.stopPropagation();
+            window.showEditorFigureLayoutPopover(event);
+        }
+
+        function handleEditorFigureLayoutPreviewKeydown(event) {
+            const image = event.target && event.target.closest
+                ? event.target.closest('img[data-editor-figure-layout]')
+                : null;
+            if (!image || (event.key !== 'Enter' && event.key !== ' ')) return;
+            event.preventDefault();
+            event.stopPropagation();
+            window.showEditorFigureLayoutPopover(event);
+        }
+
+        // Capture before api.js's generic image opener so a normal click edits
+        // layout. Cmd/Ctrl-click intentionally falls through to view the source.
+        document.addEventListener('click', handleEditorFigureLayoutPreviewClick, true);
+        document.addEventListener('keydown', handleEditorFigureLayoutPreviewKeydown, true);
 
         function renderIllustrationBadges() {
             const listContainer = document.getElementById('illustrationsList');

@@ -480,6 +480,198 @@ def test_paper_and_editor_figure_layout_controls_keep_their_write_boundaries():
     assert "window.setEditorFigureLayout('size', '${size}')" in editor_popover
 
 
+def test_editor_detached_preview_click_edits_layout_and_preserves_original_view():
+    ocr_source = _read(STATIC_JS_DIR / "ocr.js")
+    helper_start = ocr_source.index("function currentEditorFigureLayout()")
+    helper_end_marker = "window.applyEditorFigureLayoutPreview = applyEditorFigureLayoutPreview;"
+    helper_end = ocr_source.index(helper_end_marker, helper_start) + len(helper_end_marker)
+    helper_source = ocr_source[helper_start:helper_end]
+    click_start = ocr_source.index("function handleEditorFigureLayoutPreviewClick(event)")
+    click_end = ocr_source.index(
+        "function handleEditorFigureLayoutPreviewKeydown(event)", click_start
+    )
+    click_source = ocr_source[click_start:click_end]
+
+    node = shutil.which("node")
+    assert node, "Node.js is required for the frontend executable regression"
+    script = r'''
+const EDITOR_FIGURE_SIZE_LABELS = { auto: '自动', small: '小', medium: '中', large: '大' };
+const EDITOR_FIGURE_ALIGN_LABELS = { right: '题干右侧', center: '下方居中', bottom_right: '下方居右' };
+let popoverCount = 0;
+let openCount = 0;
+global.window = {
+  FigureLayoutState: {
+    snapshot() { return { figure_align: 'right', figure_size: 'auto' }; }
+  },
+  showEditorFigureLayoutPopover() { popoverCount += 1; },
+  open() { openCount += 1; }
+};
+global.document = { getElementById() { return null; } };
+
+function makeImage(src) {
+  const wrapper = { style: {}, parentElement: null };
+  const image = {
+    dataset: {}, style: {}, parentElement: wrapper,
+    naturalWidth: 600, naturalHeight: 300, complete: true,
+    attrs: { src, 'data-safe-image-open': 'true' },
+    classList: { add() {}, remove() {} },
+    setAttribute(name, value) { this.attrs[name] = String(value); },
+    getAttribute(name) { return this.attrs[name] || null; },
+    addEventListener() {},
+    closest(selector) {
+      if (selector === 'img[data-editor-figure-layout]' && this.dataset.editorFigureLayout === 'true') return this;
+      if (selector === 'img[data-safe-image-open]' && this.attrs['data-safe-image-open']) return this;
+      return null;
+    }
+  };
+  return image;
+}
+function makeContainer(image) {
+  return {
+    style: {}, firstChild: {},
+    querySelectorAll() { return [image]; },
+    insertBefore() {}, appendChild() {}
+  };
+}
+function clickEvent(image, modifiers = {}) {
+  return {
+    target: image,
+    metaKey: Boolean(modifiers.metaKey),
+    ctrlKey: Boolean(modifiers.ctrlKey),
+    prevented: false,
+    stopped: false,
+    preventDefault() { this.prevented = true; },
+    stopPropagation() { this.stopped = true; }
+  };
+}
+function runGenericImageOpener(event) {
+  if (event.stopped) return;
+  const image = event.target.closest('img[data-safe-image-open]');
+  if (image) window.open(image.getAttribute('src'), '_blank');
+}
+''' + helper_source + '\n' + click_source + r'''
+
+const detached = makeImage('/static/uploads/detached.png');
+applyEditorFigureLayoutPreview(
+  makeContainer(detached),
+  '题干\n\n![](/static/uploads/detached.png)'
+);
+if (detached.dataset.editorFigureLayout !== 'true' || detached.attrs.role !== 'button') {
+  throw new Error('detached editor image was not promoted to a layout control');
+}
+const normalClick = clickEvent(detached);
+handleEditorFigureLayoutPreviewClick(normalClick);
+runGenericImageOpener(normalClick);
+if (popoverCount !== 1 || openCount !== 0 || !normalClick.prevented || !normalClick.stopped) {
+  throw new Error(`normal click boundary failed: popover=${popoverCount}, open=${openCount}`);
+}
+
+const modifierClick = clickEvent(detached, { metaKey: true });
+handleEditorFigureLayoutPreviewClick(modifierClick);
+runGenericImageOpener(modifierClick);
+if (popoverCount !== 1 || openCount !== 1) {
+  throw new Error('Cmd-click did not preserve original-image viewing');
+}
+
+const anchored = makeImage('/static/uploads/anchored.png');
+applyEditorFigureLayoutPreview(
+  makeContainer(anchored),
+  '![](/static/uploads/anchored.png)\n\n后续正文'
+);
+if (anchored.dataset.editorFigureLayout) {
+  throw new Error('anchored image incorrectly received whole-question layout controls');
+}
+const anchoredClick = clickEvent(anchored);
+handleEditorFigureLayoutPreviewClick(anchoredClick);
+runGenericImageOpener(anchoredClick);
+if (popoverCount !== 1 || openCount !== 2) {
+  throw new Error('anchored image no longer opens its original');
+}
+'''
+    result = subprocess.run(
+        [node, "-e", script],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_right_layout_size_choices_resolve_to_visible_safe_layouts():
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+    wrapper_start = paper_source.index("window.setFigureAlign = function")
+    wrapper_end = paper_source.index(
+        "window.showFigureAlignPopover = function", wrapper_start
+    )
+    wrapper_source = paper_source[wrapper_start:wrapper_end]
+    ocr_source = _read(STATIC_JS_DIR / "ocr.js")
+    editor_start = ocr_source.index("window.setEditorFigureLayout = function")
+    editor_end = ocr_source.index(
+        "window.showEditorFigureLayoutPopover = function", editor_start
+    )
+    editor_source = ocr_source[editor_start:editor_end]
+
+    node = shutil.which("node")
+    assert node, "Node.js is required for the frontend executable regression"
+    script = r'''
+function normalizeFigureSize(value) {
+  return ['auto', 'small', 'medium', 'large'].includes(value) ? value : 'auto';
+}
+function getQuestionFigSize(question) { return normalizeFigureSize(question && question.figure_size); }
+function getQuestionFigAlign(question) { return question.figure_align || 'right'; }
+const paperCalls = [];
+const question = { id: 7, figure_align: 'right', figure_size: 'auto' };
+const editorState = { align: 'right', size: 'auto', customAlign: false };
+global.window = {
+  PaperStore: { questionsMap: { 7: question } },
+  setFigureLayout(qid, align, size) {
+    paperCalls.push({ qid, align, size });
+    question.figure_align = align;
+    question.figure_size = size;
+  },
+  FigureLayoutState: {
+    get align() { return editorState.align; },
+    get size() { return editorState.size; },
+    setAlign(value) { editorState.align = value; },
+    setSize(value) { editorState.size = value; },
+    setCustomAlign(value) { editorState.customAlign = Boolean(value); }
+  },
+  renderIllustrationBadges() {}
+};
+global.document = { getElementById() { return null; } };
+global.applyEditorFigureLayoutPreview = function() {};
+global.setTimeout = function(callback) { callback(); };
+''' + wrapper_source + '\n' + editor_source + r'''
+
+window.setFigureSize(7, 'large');
+if (paperCalls[0].align !== 'bottom_right' || paperCalls[0].size !== 'large') {
+  throw new Error(`paper large did not move below-right: ${JSON.stringify(paperCalls[0])}`);
+}
+window.setFigureAlign(7, 'right');
+if (paperCalls[1].align !== 'right' || paperCalls[1].size !== 'small') {
+  throw new Error(`paper right did not restore compact size: ${JSON.stringify(paperCalls[1])}`);
+}
+
+window.setEditorFigureLayout('size', 'medium');
+if (editorState.align !== 'bottom_right' || editorState.size !== 'medium' || !editorState.customAlign) {
+  throw new Error(`editor medium did not move below-right: ${JSON.stringify(editorState)}`);
+}
+window.setEditorFigureLayout('align', 'right');
+if (editorState.align !== 'right' || editorState.size !== 'small') {
+  throw new Error(`editor right did not restore compact size: ${JSON.stringify(editorState)}`);
+}
+'''
+    result = subprocess.run(
+        [node, "-e", script],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_paper_figure_layout_writes_are_serial_and_reconcile_live_objects():
     paper_source = _read(STATIC_JS_DIR / "paper.js")
     handler_start = paper_source.index("const figureLayoutWrites = Object.create(null)")

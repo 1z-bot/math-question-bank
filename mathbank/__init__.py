@@ -1,4 +1,4 @@
 """MathBank shared backend support package."""
 
-__version__ = "2.1.10"
+__version__ = "2.1.11"
 GITHUB_REPO = "JudgePeach/math-question-bank"

@@ -2987,12 +2987,20 @@
 
     window.setFigureAlign = function (qid, alignVal) {
         const q = window.PaperStore.questionsMap[parseInt(qid, 10)] || {};
-        window.setFigureLayout(qid, alignVal, getQuestionFigSize(q));
+        const currentSize = getQuestionFigSize(q);
+        const nextSize = alignVal === 'right' && ['medium', 'large'].includes(currentSize)
+            ? 'small'
+            : currentSize;
+        window.setFigureLayout(qid, alignVal, nextSize);
     };
 
     window.setFigureSize = function (qid, sizeVal) {
         const q = window.PaperStore.questionsMap[parseInt(qid, 10)] || {};
-        window.setFigureLayout(qid, getQuestionFigAlign(q), sizeVal);
+        const currentAlign = getQuestionFigAlign(q);
+        const nextAlign = currentAlign === 'right' && ['medium', 'large'].includes(sizeVal)
+            ? 'bottom_right'
+            : currentAlign;
+        window.setFigureLayout(qid, nextAlign, sizeVal);
     };
 
     window.showFigureAlignPopover = function (event, qid) {
@@ -3043,12 +3051,13 @@
             <div class="mt-1 border-t border-slate-100 px-1 pt-2 dark:border-slate-700">
                 <div class="mb-1 flex items-center justify-between px-1 text-[10px] text-slate-400">
                     <span>尺寸</span>
-                    <span>${currentAlign === 'right' ? '右侧模式自动限宽' : '下方布局生效'}</span>
+                    <span>${currentAlign === 'right' ? '中/大图自动改为下方居右' : '下方布局生效'}</span>
                 </div>
                 <div class="flex items-center gap-1">
                     ${FIGURE_SIZE_VALUES.map(size => `
                         <button type="button" onclick="window.setFigureSize(${qid}, '${size}')"
                             class="min-w-0 flex-1 rounded-md border px-1.5 py-1 text-center text-[10px] transition-colors ${currentSize === size ? 'border-brand-200 bg-brand-50 font-bold text-brand-700' : 'border-slate-200 bg-white text-slate-500 hover:border-brand-200 hover:text-brand-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300'}"
+                            title="${currentAlign === 'right' && ['medium', 'large'].includes(size) ? '为避免挤压题干，将自动改为下方居右' : `插图尺寸：${FIGURE_SIZE_LABELS[size]}`}"
                             aria-label="插图尺寸：${FIGURE_SIZE_LABELS[size]}">${FIGURE_SIZE_LABELS[size]}</button>
                     `).join('')}
                 </div>
