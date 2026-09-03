@@ -716,17 +716,22 @@ def build_latex_document(
                     figure_height_reserve_cm,
                 )
                 figure_in_solution_box = bool(
-                    is_sol_spaced and fig_align in {"center", "bottom_right"}
+                    is_sol_spaced
+                    and fig_align in {"bottom_left", "center", "bottom_right"}
                     and len(fig_elements) == 1
                 )
 
-                if fig_align in {"center", "bottom_right"}:
+                if fig_align in {"bottom_left", "center", "bottom_right"}:
                     lines.append(stem_text)
                     if figure_in_solution_box:
                         lines.append(
                             rf"\par\noindent\begin{{minipage}}[t][{figure_solution_box_height:.1f}cm][t]{{\linewidth}}"
                         )
-                    lower_environment = "center" if fig_align == "center" else "flushright"
+                    lower_environment = {
+                        "bottom_left": "flushleft",
+                        "center": "center",
+                        "bottom_right": "flushright",
+                    }[fig_align]
                     split_large_figures = (
                         len(fig_elements) > 1 and figure_size in {"medium", "large"}
                     )

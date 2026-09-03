@@ -86,7 +86,7 @@
         const defaultAlign = (window.PaperStore.meta.paper_type === 'quiz') ? 'bottom_right' : 'right';
         if (!q) return defaultAlign;
         if (q.custom_figure_align) return q.custom_figure_align;
-        if (q.figure_align_custom && ['right', 'center', 'bottom_right'].includes(q.figure_align)) {
+        if (q.figure_align_custom && ['right', 'bottom_left', 'center', 'bottom_right'].includes(q.figure_align)) {
             return q.figure_align;
         }
         if (q.figure_align && q.figure_align !== 'right') return q.figure_align;
@@ -1343,7 +1343,7 @@
                     solSpaceCm = parseFloat(item.solution_space !== undefined ? item.solution_space : defaultSpace);
                     if (isNaN(solSpaceCm)) solSpaceCm = 0.0;
 
-                    if (solSpaceCm > 0 && (renderedFigAlign === 'bottom_right' || renderedFigAlign === 'center')) {
+                    if (solSpaceCm > 0 && ['bottom_left', 'center', 'bottom_right'].includes(renderedFigAlign)) {
                         isSolSpaceEmbedded = true;
                     }
                 }
@@ -1401,7 +1401,9 @@
 
                     let embeddedImgContainer = '';
                     if (isSolSpaceEmbedded && embeddedImgHtml) {
-                        const posClass = renderedFigAlign === 'center' ? 'left-1/2 -translate-x-1/2' : 'right-3';
+                        const posClass = renderedFigAlign === 'center'
+                            ? 'left-1/2 -translate-x-1/2'
+                            : (renderedFigAlign === 'bottom_left' ? 'left-3' : 'right-3');
                         embeddedImgContainer = `
                             <div class="absolute ${posClass} top-2 z-10">
                                 ${embeddedImgHtml}
@@ -2728,7 +2730,7 @@
 
     function persistedFigureAlign(q) {
         const value = String(q && q.figure_align || 'right');
-        return ['right', 'center', 'bottom_right'].includes(value) ? value : 'right';
+        return ['right', 'bottom_left', 'center', 'bottom_right'].includes(value) ? value : 'right';
     }
 
     function snapshotFigureLayoutsForBankFetch() {
@@ -2883,7 +2885,7 @@
             return;
         }
 
-        const allowedAlignments = ['right', 'center', 'bottom_right'];
+        const allowedAlignments = ['right', 'bottom_left', 'center', 'bottom_right'];
         const nextAlign = allowedAlignments.includes(alignVal) ? alignVal : getQuestionFigAlign(q);
         const nextSize = normalizeFigureSize(sizeVal);
         const writeState = getFigureLayoutWriteState(qid, q);
@@ -2952,7 +2954,12 @@
             if (editorReconciled) refreshCurrentEditorFigureLayout(qid);
             else syncCurrentEditorFigureLayout(qid, writeState.confirmed, true, requestedLayout);
             rerenderFigureLayoutPreviews();
-            const alignLabels = { 'right': '题干右侧', 'center': '下方居中', 'bottom_right': '下方居右' };
+            const alignLabels = {
+                'right': '题干右侧',
+                'bottom_left': '下方居左',
+                'center': '下方居中',
+                'bottom_right': '下方居右'
+            };
             const seqNum = currentQuestion && currentQuestion.seq_num !== undefined
                 ? currentQuestion.seq_num
                 : qid;
@@ -3018,6 +3025,8 @@
 
         const popover = document.createElement('div');
         popover.id = 'figureAlignPopoverMenu';
+        popover.setAttribute('role', 'dialog');
+        popover.setAttribute('aria-label', '调整插图排版');
         popover.className = 'fixed z-50 w-56 bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200 shadow-xl p-2 font-sans text-xs flex flex-col space-y-1 animate-in fade-in zoom-in-95 duration-150 dark:bg-slate-800 dark:border-slate-700 text-slate-800 dark:text-slate-100';
 
         // Position popover near mouse cursor
@@ -3026,7 +3035,7 @@
 
         // Keep inside viewport bounds
         if (left + 220 > window.innerWidth) left = window.innerWidth - 230;
-        if (top + 220 > window.innerHeight) top = window.innerHeight - 230;
+        if (top + 265 > window.innerHeight) top = window.innerHeight - 275;
 
         popover.style.left = `${left}px`;
         popover.style.top = `${top}px`;
@@ -3034,17 +3043,21 @@
         popover.innerHTML = `
             <div class="px-2 py-1 text-[11px] font-bold text-slate-400 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
                 <span><i class="fa-solid fa-sliders text-brand-500 mr-1"></i> 调整插图排版</span>
-                <button onclick="document.getElementById('figureAlignPopoverMenu').remove()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><i class="fa-solid fa-xmark"></i></button>
+                <button onclick="document.getElementById('figureAlignPopoverMenu').remove()" aria-label="关闭插图排版" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><i class="fa-solid fa-xmark"></i></button>
             </div>
-            <button onclick="window.setFigureAlign(${qid}, 'right')" class="w-full text-left px-3 py-1.5 rounded-xl hover:bg-brand-50 hover:text-brand-600 transition-colors flex items-center justify-between ${currentAlign === 'right' ? 'bg-brand-50 font-bold text-brand-600' : ''}">
+            <button onclick="window.setFigureAlign(${qid}, 'right')" aria-label="插图位置：题干右侧" aria-pressed="${currentAlign === 'right' ? 'true' : 'false'}" class="w-full text-left px-3 py-1.5 rounded-xl hover:bg-brand-50 hover:text-brand-600 transition-colors flex items-center justify-between ${currentAlign === 'right' ? 'bg-brand-50 font-bold text-brand-600' : ''}">
                 <span><i class="fa-solid fa-align-right text-xs mr-2 text-brand-500"></i> 题干右侧 (默认)</span>
                 ${currentAlign === 'right' ? '<i class="fa-solid fa-check text-xs"></i>' : ''}
             </button>
-            <button onclick="window.setFigureAlign(${qid}, 'center')" class="w-full text-left px-3 py-1.5 rounded-xl hover:bg-brand-50 hover:text-brand-600 transition-colors flex items-center justify-between ${currentAlign === 'center' ? 'bg-brand-50 font-bold text-brand-600' : ''}">
+            <button onclick="window.setFigureAlign(${qid}, 'bottom_left')" aria-label="插图位置：题干下方居左" aria-pressed="${currentAlign === 'bottom_left' ? 'true' : 'false'}" class="w-full text-left px-3 py-1.5 rounded-xl hover:bg-brand-50 hover:text-brand-600 transition-colors flex items-center justify-between ${currentAlign === 'bottom_left' ? 'bg-brand-50 font-bold text-brand-600' : ''}">
+                <span><i class="fa-solid fa-align-left text-xs mr-2 text-brand-500"></i> 题干下方居左</span>
+                ${currentAlign === 'bottom_left' ? '<i class="fa-solid fa-check text-xs"></i>' : ''}
+            </button>
+            <button onclick="window.setFigureAlign(${qid}, 'center')" aria-label="插图位置：题干下方居中" aria-pressed="${currentAlign === 'center' ? 'true' : 'false'}" class="w-full text-left px-3 py-1.5 rounded-xl hover:bg-brand-50 hover:text-brand-600 transition-colors flex items-center justify-between ${currentAlign === 'center' ? 'bg-brand-50 font-bold text-brand-600' : ''}">
                 <span><i class="fa-solid fa-align-center text-xs mr-2 text-brand-500"></i> 题干下方居中</span>
                 ${currentAlign === 'center' ? '<i class="fa-solid fa-check text-xs"></i>' : ''}
             </button>
-            <button onclick="window.setFigureAlign(${qid}, 'bottom_right')" class="w-full text-left px-3 py-1.5 rounded-xl hover:bg-brand-50 hover:text-brand-600 transition-colors flex items-center justify-between ${currentAlign === 'bottom_right' ? 'bg-brand-50 font-bold text-brand-600' : ''}">
+            <button onclick="window.setFigureAlign(${qid}, 'bottom_right')" aria-label="插图位置：题干下方居右" aria-pressed="${currentAlign === 'bottom_right' ? 'true' : 'false'}" class="w-full text-left px-3 py-1.5 rounded-xl hover:bg-brand-50 hover:text-brand-600 transition-colors flex items-center justify-between ${currentAlign === 'bottom_right' ? 'bg-brand-50 font-bold text-brand-600' : ''}">
                 <span><i class="fa-solid fa-align-right text-xs mr-2 text-brand-500"></i> 题干下方居右</span>
                 ${currentAlign === 'bottom_right' ? '<i class="fa-solid fa-check text-xs"></i>' : ''}
             </button>
@@ -3058,7 +3071,7 @@
                         <button type="button" onclick="window.setFigureSize(${qid}, '${size}')"
                             class="min-w-0 flex-1 rounded-md border px-1.5 py-1 text-center text-[10px] transition-colors ${currentSize === size ? 'border-brand-200 bg-brand-50 font-bold text-brand-700' : 'border-slate-200 bg-white text-slate-500 hover:border-brand-200 hover:text-brand-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300'}"
                             title="${currentAlign === 'right' && ['medium', 'large'].includes(size) ? '为避免挤压题干，将自动改为下方居右' : `插图尺寸：${FIGURE_SIZE_LABELS[size]}`}"
-                            aria-label="插图尺寸：${FIGURE_SIZE_LABELS[size]}">${FIGURE_SIZE_LABELS[size]}</button>
+                            aria-label="插图尺寸：${FIGURE_SIZE_LABELS[size]}" aria-pressed="${currentSize === size ? 'true' : 'false'}">${FIGURE_SIZE_LABELS[size]}</button>
                     `).join('')}
                 </div>
             </div>
@@ -3302,12 +3315,15 @@
             const effectiveAlign = (imgSrcList.length > 1 && figAlign === 'right') ? 'center' : (figAlign || 'right');
             const alignLabelMap = {
                 'right': '题干右侧',
+                'bottom_left': '下方居左',
                 'center': '下方居中',
                 'bottom_right': '下方居右'
             };
             const currentLabel = alignLabelMap[effectiveAlign] || '下方居中';
             const currentSizeLabel = FIGURE_SIZE_LABELS[figSize] || FIGURE_SIZE_LABELS.auto;
-            const iconClass = effectiveAlign === 'center' ? 'fa-align-center' : 'fa-align-right';
+            const iconClass = effectiveAlign === 'center'
+                ? 'fa-align-center'
+                : (effectiveAlign === 'bottom_left' ? 'fa-align-left' : 'fa-align-right');
             const qidAttr = parseInt(qid, 10) || 0;
             const countTag = imgSrcList.length > 1 ? ` (${imgSrcList.length}图)` : '';
             const dimensions = getFigureDimensions(figSize, effectiveAlign, imgSrcList.length);
@@ -3326,7 +3342,7 @@
             }).join('');
 
             const btnHtml = showControls ? `
-                <div class="mt-1 ${effectiveAlign === 'center' ? 'text-center' : 'text-right'}">
+                <div class="mt-1 ${effectiveAlign === 'center' ? 'text-center' : (effectiveAlign === 'bottom_left' ? 'text-left' : 'text-right')}">
                     <button onclick="event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})" class="inline-flex items-center text-[10px] font-sans text-brand-700 bg-brand-50 hover:bg-brand-100 border border-brand-200/80 rounded-md px-1.5 py-0.5 transition-colors shadow-sm">
                         <i class="fa-solid ${iconClass} text-[9px] mr-1 text-brand-500"></i> ${currentLabel} · ${currentSizeLabel}${countTag} <i class="fa-solid fa-chevron-down text-[8px] ml-1 opacity-70"></i>
                     </button>
@@ -3335,14 +3351,14 @@
 
             const imgControlHtml = `
                 <div class="inline-block max-w-full relative group/fig">
-                    <div class="flex flex-wrap items-center ${effectiveAlign === 'center' ? 'justify-center' : 'justify-end'} gap-2">
+                    <div class="flex flex-wrap items-center ${effectiveAlign === 'center' ? 'justify-center' : (effectiveAlign === 'bottom_left' ? 'justify-start' : 'justify-end')} gap-2">
                         ${imgsHtml}
                     </div>
                     ${btnHtml}
                 </div>
             `;
 
-            if (embedInSolSpace && (effectiveAlign === 'center' || effectiveAlign === 'bottom_right')) {
+            if (embedInSolSpace && ['bottom_left', 'center', 'bottom_right'].includes(effectiveAlign)) {
                 return {
                     stemHtml: `<div>${stemText}</div>`,
                     imgHtml: imgControlHtml,
@@ -3350,7 +3366,9 @@
                 };
             }
 
-            if (effectiveAlign === 'center') {
+            if (effectiveAlign === 'bottom_left') {
+                return `<div>${stemText}</div><div class="my-2 text-left">${imgControlHtml}</div>`;
+            } else if (effectiveAlign === 'center') {
                 return `<div>${stemText}</div><div class="my-2 text-center">${imgControlHtml}</div>`;
             } else if (effectiveAlign === 'bottom_right') {
                 return `<div>${stemText}</div><div class="my-2 text-right">${imgControlHtml}</div>`;

@@ -531,7 +531,7 @@
             hydrate(record) {
                 const align = String(record && record.figure_align || 'right');
                 const size = String(record && record.figure_size || 'auto');
-                this.align = ['right', 'center', 'bottom_right'].includes(align)
+                this.align = ['right', 'bottom_left', 'center', 'bottom_right'].includes(align)
                     ? align
                     : 'right';
                 this.size = ['auto', 'small', 'medium', 'large'].includes(size)
@@ -540,7 +540,7 @@
                 this.customAlign = Boolean(record && record.figure_align_custom);
             },
             setAlign(value) {
-                if (['right', 'center', 'bottom_right'].includes(value)) {
+                if (['right', 'bottom_left', 'center', 'bottom_right'].includes(value)) {
                     this.align = value;
                 }
             },

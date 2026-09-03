@@ -314,6 +314,49 @@ def test_word_export_maps_detached_figure_size_and_preserves_aspect_ratio(
 
 
 @pytest.mark.parametrize(
+    ("figure_size", "expected_width"),
+    [("small", 1.97), ("large", 4.33)],
+)
+def test_word_export_bottom_left_uses_left_alignment_and_requested_size(
+    tmp_path,
+    figure_size,
+    expected_width,
+):
+    image_path = tmp_path / "bottom-left.png"
+    Image.new("RGB", (600, 300), "white").save(image_path, format="PNG")
+
+    data, diagnostics = build_word_document(
+        "Word 下方居左插图",
+        "",
+        "exam",
+        [{
+            "question": {
+                "id": 61,
+                "question_type": "detailed_answer",
+                "content": "居左尺寸测试\n\n![插图](/static/uploads/bottom-left.png)",
+                "image_paths": ["/static/uploads/bottom-left.png"],
+                "figure_align": "bottom_left",
+                "figure_size": figure_size,
+            },
+            "score": 12,
+        }],
+        uploads_dir=tmp_path,
+    )
+
+    width, height = _drawing_extents_inches(data)[0]
+    assert width == pytest.approx(expected_width, abs=0.01)
+    assert width / height == pytest.approx(2.0, abs=0.01)
+
+    root = etree.fromstring(_document_xml(data))
+    alignments = root.xpath(
+        ".//w:p[.//w:drawing]/w:pPr/w:jc/@w:val",
+        namespaces={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"},
+    )
+    assert alignments == ["left"]
+    assert diagnostics["missing_images"] == 0
+
+
+@pytest.mark.parametrize(
     ("figure_align", "figure_size", "expected_width"),
     [
         ("center", "auto", 1.85),

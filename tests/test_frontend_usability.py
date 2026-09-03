@@ -426,6 +426,108 @@ if (!rightLarge.includes('max-width: min(100%, 155px)') ||
     assert result.returncode == 0, result.stderr
 
 
+def test_bottom_left_figure_layout_runs_across_state_and_both_previews():
+    api_source = _read(STATIC_JS_DIR / "api.js")
+    api_start = api_source.index("const FigureLayoutState = {")
+    api_end_marker = "window.FigureLayoutState = FigureLayoutState;"
+    api_end = api_source.index(api_end_marker, api_start) + len(api_end_marker)
+    layout_state_source = api_source[api_start:api_end]
+
+    editor_source = _read(STATIC_JS_DIR / "editor.js")
+    assert "['right', 'bottom_left', 'center', 'bottom_right'].includes(figureAlign)" in editor_source
+    assert "['right', 'bottom_left', 'center', 'bottom_right'].includes(value)" in editor_source
+
+    ocr_source = _read(STATIC_JS_DIR / "ocr.js")
+    editor_preview_start = ocr_source.index("function currentEditorFigureLayout()")
+    editor_preview_end_marker = "window.applyEditorFigureLayoutPreview = applyEditorFigureLayoutPreview;"
+    editor_preview_end = ocr_source.index(
+        editor_preview_end_marker, editor_preview_start
+    ) + len(editor_preview_end_marker)
+    editor_preview_source = ocr_source[editor_preview_start:editor_preview_end]
+
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+    paper_helper_start = paper_source.index("function shouldPreserveInlinePaperImages(raw)")
+    paper_helper_end = paper_source.index("// Init on DOMContentLoaded", paper_helper_start)
+    paper_helper_source = paper_source[paper_helper_start:paper_helper_end]
+
+    node = shutil.which("node")
+    assert node, "Node.js is required for the frontend executable regression"
+    script = r'''
+global.window = {};
+''' + layout_state_source + r'''
+FigureLayoutState.hydrate({ figure_align: 'bottom_left', figure_size: 'large', figure_align_custom: true });
+if (FigureLayoutState.align !== 'bottom_left' || !FigureLayoutState.customAlign) {
+  throw new Error(`bottom-left layout was rejected during hydration: ${JSON.stringify(FigureLayoutState.snapshot())}`);
+}
+FigureLayoutState.setAlign('right');
+FigureLayoutState.setAlign('bottom_left');
+if (FigureLayoutState.align !== 'bottom_left') {
+  throw new Error('bottom-left layout was rejected by setAlign');
+}
+
+const EDITOR_FIGURE_SIZE_LABELS = { auto: '自动', small: '小', medium: '中', large: '大' };
+const EDITOR_FIGURE_ALIGN_LABELS = { right: '题干右侧', bottom_left: '下方居左', center: '下方居中', bottom_right: '下方居右' };
+window.FigureLayoutState = FigureLayoutState;
+const wrapper = { style: {} };
+const editorImage = {
+  dataset: {}, style: {}, parentElement: wrapper,
+  naturalWidth: 900, naturalHeight: 600, complete: true,
+  classList: { add() {}, remove() {} },
+  attrs: {},
+  setAttribute(name, value) { this.attrs[name] = String(value); },
+  addEventListener() {}
+};
+const editorContainer = {
+  style: {}, firstChild: {},
+  querySelectorAll() { return [editorImage]; },
+  insertBefore() {}, appendChild() {}
+};
+global.document = { getElementById() { return null; } };
+''' + editor_preview_source + r'''
+applyEditorFigureLayoutPreview(
+  editorContainer,
+  '题干\n\n![](/static/uploads/bottom-left.png)'
+);
+if (wrapper.style.textAlign !== 'left') {
+  throw new Error(`editor preview was not left-aligned: ${JSON.stringify(wrapper.style)}`);
+}
+if (editorImage.attrs['aria-label'] !== '调整插图排版：下方居左，大') {
+  throw new Error(`editor accessible label lost bottom-left wording: ${editorImage.attrs['aria-label']}`);
+}
+
+window.parseMarkdownWithMath = value => value;
+window.MathBankSafe = {
+  safeImageUrl: value => value,
+  escapeAttribute: value => value,
+  sanitizeRichHtml: value => value
+};
+''' + paper_helper_source + r'''
+const source = '题干\n\n![](/static/uploads/bottom-left.png)';
+const rendered = formatQuestionContentHtml(source, 61, 'bottom_left', false, true, 'large');
+if (!rendered.includes('class="my-2 text-left"') ||
+    !rendered.includes('justify-start') ||
+    !rendered.includes('data-figure-align="bottom_left"') ||
+    !rendered.includes('下方居左')) {
+  throw new Error(`paper bottom-left layout was incomplete: ${rendered}`);
+}
+const embedded = formatQuestionContentHtml(source, 61, 'bottom_left', true, true, 'large');
+if (embedded.figAlign !== 'bottom_left' || !embedded.imgHtml.includes('justify-start')) {
+  throw new Error(`solution-space bottom-left layout was incomplete: ${JSON.stringify(embedded)}`);
+}
+'''
+    result = subprocess.run(
+        [node, "-e", script],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+    assert "['bottom_left', 'center', 'bottom_right'].includes(renderedFigAlign)" in paper_source
+    assert "renderedFigAlign === 'bottom_left' ? 'left-3' : 'right-3'" in paper_source
+
+
 def test_paper_and_editor_figure_layout_controls_keep_their_write_boundaries():
     paper_source = _read(STATIC_JS_DIR / "paper.js")
     ocr_source = _read(STATIC_JS_DIR / "ocr.js")
@@ -444,7 +546,7 @@ def test_paper_and_editor_figure_layout_controls_keep_their_write_boundaries():
     ):
         assert marker in paper_handler
     assert "const FIGURE_SIZE_VALUES = ['auto', 'small', 'medium', 'large']" in paper_source
-    assert "if (q.figure_align_custom && ['right', 'center', 'bottom_right'].includes(q.figure_align))" in paper_source
+    assert "if (q.figure_align_custom && ['right', 'bottom_left', 'center', 'bottom_right'].includes(q.figure_align))" in paper_source
     assert "FIGURE_SIZE_VALUES.map(size =>" in paper_source
     assert "window.setFigureSize(${qid}, '${size}')" in paper_source
     assert "window.waitForFigureLayoutWrite = async function" in paper_source
@@ -476,8 +578,20 @@ def test_paper_and_editor_figure_layout_controls_keep_their_write_boundaries():
         "function renderIllustrationBadges()", editor_popover_start
     )
     editor_popover = ocr_source[editor_popover_start:editor_popover_end]
+    assert "['right', 'bottom_left', 'center', 'bottom_right'].map(align =>" in editor_popover
+    assert 'class="grid grid-cols-2 gap-1"' in editor_popover
+    assert "${EDITOR_FIGURE_ALIGN_LABELS[align]}</button>" in editor_popover
+    assert "${layout.align === 'right' ? '中/大图自动改为下方居右' : '下方布局生效'}" in editor_popover
+    assert ".replace('题干', '').replace('下方', '')" not in editor_popover
+    for label in ('题干右侧', '下方居左', '下方居中', '下方居右'):
+        assert label in ocr_source
     assert "['auto', 'small', 'medium', 'large'].map(size =>" in editor_popover
     assert "window.setEditorFigureLayout('size', '${size}')" in editor_popover
+
+    for label in ('题干右侧', '题干下方居左', '题干下方居中', '题干下方居右'):
+        assert label in paper_source
+    assert "window.setFigureAlign(${qid}, 'bottom_left')" in paper_source
+    assert 'aria-label="插图位置：题干下方居左"' in paper_source
 
 
 def test_editor_detached_preview_click_edits_layout_and_preserves_original_view():
@@ -496,7 +610,7 @@ def test_editor_detached_preview_click_edits_layout_and_preserves_original_view(
     assert node, "Node.js is required for the frontend executable regression"
     script = r'''
 const EDITOR_FIGURE_SIZE_LABELS = { auto: '自动', small: '小', medium: '中', large: '大' };
-const EDITOR_FIGURE_ALIGN_LABELS = { right: '题干右侧', center: '下方居中', bottom_right: '下方居右' };
+const EDITOR_FIGURE_ALIGN_LABELS = { right: '题干右侧', bottom_left: '下方居左', center: '下方居中', bottom_right: '下方居右' };
 let popoverCount = 0;
 let openCount = 0;
 global.window = {
@@ -691,7 +805,7 @@ function getQuestionFigSize(question) {
 }
 function getQuestionFigAlign(question) {
   const value = String(question && question.figure_align || 'right');
-  return ['right', 'center', 'bottom_right'].includes(value) ? value : 'right';
+  return ['right', 'bottom_left', 'center', 'bottom_right'].includes(value) ? value : 'right';
 }
 const FIGURE_SIZE_LABELS = { auto: '自动', small: '小', medium: '中', large: '大' };
 

@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
 from mathbank.database import (
+    FIGURE_ALIGN_VALUES,
     FIGURE_SIZE_VALUES,
     Question,
     QuestionCurriculum,
@@ -2828,7 +2829,7 @@ def create_question(
             review=review,
             tikz_code=parsed_tikz_code,
             tikz_reference_image_path=parsed_tikz_reference_image_path,
-            figure_align=figure_align if figure_align in ["right", "center", "bottom_right"] else "right",
+            figure_align=figure_align if figure_align in FIGURE_ALIGN_VALUES else "right",
             figure_align_custom=bool(figure_align_custom),
             figure_size=figure_size,
             tags=tags
@@ -3023,7 +3024,7 @@ def update_question(
         db_question.review = review
         db_question.tikz_code = parsed_tikz_code
         db_question.tikz_reference_image_path = parsed_tikz_reference_image_path
-        if figure_align in ["right", "center", "bottom_right"]:
+        if figure_align in FIGURE_ALIGN_VALUES:
             db_question.figure_align = figure_align
         if figure_align_custom is not None:
             db_question.figure_align_custom = bool(figure_align_custom)
@@ -3171,7 +3172,7 @@ def update_question_figure_align(
     db_question = db.query(Question).filter(Question.id == question_id).first()
     if not db_question:
         raise HTTPException(status_code=404, detail="未找到对应的题目")
-    if figure_align not in ["right", "center", "bottom_right"]:
+    if figure_align not in FIGURE_ALIGN_VALUES:
         figure_align = "right"
     db_question.figure_align = figure_align
     db_question.figure_align_custom = True
@@ -3197,7 +3198,7 @@ def update_question_figure_layout(
     db_question = db.query(Question).filter(Question.id == question_id).first()
     if not db_question:
         raise HTTPException(status_code=404, detail="未找到对应的题目")
-    if figure_align not in {"right", "center", "bottom_right"}:
+    if figure_align not in FIGURE_ALIGN_VALUES:
         raise HTTPException(status_code=400, detail="无效的插图排版位置")
     figure_size = str(figure_size or "").strip()
     if figure_size not in FIGURE_SIZE_VALUES:

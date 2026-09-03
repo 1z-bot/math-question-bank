@@ -213,7 +213,7 @@ let bankQuestionsRetryTimer = null;
                     || Number(originalQuestionState.id) !== normalizedId) {
                 return false;
             }
-            if (!['right', 'center', 'bottom_right'].includes(figureAlign)) return false;
+            if (!['right', 'bottom_left', 'center', 'bottom_right'].includes(figureAlign)) return false;
             if (!['auto', 'small', 'medium', 'large'].includes(figureSize)) return false;
             originalQuestionState.figure_align = figureAlign;
             originalQuestionState.figure_size = figureSize;
@@ -230,7 +230,7 @@ let bankQuestionsRetryTimer = null;
                     || typeof FigureLayoutState.snapshot !== 'function') {
                 return false;
             }
-            const validAlign = value => ['right', 'center', 'bottom_right'].includes(value);
+            const validAlign = value => ['right', 'bottom_left', 'center', 'bottom_right'].includes(value);
             const validSize = value => ['auto', 'small', 'medium', 'large'].includes(value);
             const confirmedAlign = confirmed && confirmed.figure_align;
             const confirmedSize = confirmed && confirmed.figure_size;

@@ -1151,7 +1151,7 @@ class WordExamBuilder:
         )
         detached_height = self._detached_figure_height(item.question)
         detached_block_height = 0.0
-        if detached_images and align in {"center", "bottom_right"}:
+        if detached_images and align in {"bottom_left", "center", "bottom_right"}:
             try:
                 detached_block_height = self._detached_figure_block_height(
                     detached_images,
@@ -1178,7 +1178,10 @@ class WordExamBuilder:
             self._add_content_blocks(p, item.stem, images=inline_images)
             if detached_images:
                 fig_p = self.doc.add_paragraph()
-                fig_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if align == "bottom_right" else WD_ALIGN_PARAGRAPH.CENTER
+                fig_p.alignment = {
+                    "bottom_left": WD_ALIGN_PARAGRAPH.LEFT,
+                    "bottom_right": WD_ALIGN_PARAGRAPH.RIGHT,
+                }.get(align, WD_ALIGN_PARAGRAPH.CENTER)
                 for path in detached_images:
                     self._add_image(
                         fig_p,

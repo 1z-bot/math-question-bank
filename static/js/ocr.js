@@ -453,6 +453,7 @@
         };
         const EDITOR_FIGURE_ALIGN_LABELS = {
             right: '题干右侧',
+            bottom_left: '下方居左',
             center: '下方居中',
             bottom_right: '下方居右'
         };
@@ -461,7 +462,7 @@
             const snapshot = window.FigureLayoutState && typeof window.FigureLayoutState.snapshot === 'function'
                 ? window.FigureLayoutState.snapshot()
                 : {};
-            const align = ['right', 'center', 'bottom_right'].includes(snapshot.figure_align)
+            const align = ['right', 'bottom_left', 'center', 'bottom_right'].includes(snapshot.figure_align)
                 ? snapshot.figure_align
                 : 'right';
             const size = ['auto', 'small', 'medium', 'large'].includes(snapshot.figure_size)
@@ -539,7 +540,9 @@
                     image.classList.add('cursor-pointer');
                     const wrapper = image.parentElement;
                     if (wrapper) {
-                        wrapper.style.textAlign = effectiveAlign === 'center' ? 'center' : 'right';
+                        wrapper.style.textAlign = effectiveAlign === 'center'
+                            ? 'center'
+                            : (effectiveAlign === 'bottom_left' ? 'left' : 'right');
                         wrapper.style.maxWidth = '100%';
                         if (effectiveAlign !== 'right') {
                             wrapper.style.float = 'none';
@@ -606,7 +609,7 @@
             popover.id = 'editorFigureLayoutPopover';
             popover.setAttribute('role', 'dialog');
             popover.setAttribute('aria-label', '调整插图排版');
-            popover.className = 'fixed z-50 w-56 rounded-2xl border border-slate-200 bg-white/95 p-2 font-sans text-xs text-slate-700 shadow-xl backdrop-blur-md dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
+            popover.className = 'fixed z-50 w-64 rounded-2xl border border-slate-200 bg-white/95 p-2 font-sans text-xs text-slate-700 shadow-xl backdrop-blur-md dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
             const anchor = event.target && event.target.closest
                 ? event.target.closest('img[data-editor-figure-layout]')
                 : null;
@@ -618,15 +621,16 @@
             let top = event.clientY > 0
                 ? event.clientY + 5
                 : (anchorRect ? anchorRect.top : 8);
-            if (left + 224 > window.innerWidth) left = window.innerWidth - 234;
-            if (top + 205 > window.innerHeight) top = window.innerHeight - 215;
+            if (left + 256 > window.innerWidth) left = window.innerWidth - 266;
+            if (top + 238 > window.innerHeight) top = window.innerHeight - 248;
             popover.style.left = `${Math.max(8, left)}px`;
             popover.style.top = `${Math.max(8, top)}px`;
 
-            const alignButtons = ['right', 'center', 'bottom_right'].map(align => `
+            const alignButtons = ['right', 'bottom_left', 'center', 'bottom_right'].map(align => `
                 <button type="button" onclick="window.setEditorFigureLayout('align', '${align}')"
+                    aria-label="插图位置：${EDITOR_FIGURE_ALIGN_LABELS[align]}"
                     aria-pressed="${layout.align === align ? 'true' : 'false'}"
-                    class="min-w-0 flex-1 rounded-md border px-1 py-1 text-[10px] ${layout.align === align ? 'border-brand-200 bg-brand-50 font-bold text-brand-700' : 'border-slate-200 text-slate-500 hover:border-brand-200 hover:text-brand-600 dark:border-slate-600 dark:text-slate-300'}">${EDITOR_FIGURE_ALIGN_LABELS[align].replace('题干', '').replace('下方', '')}</button>
+                    class="min-w-0 rounded-md border px-2 py-1.5 text-[10px] ${layout.align === align ? 'border-brand-200 bg-brand-50 font-bold text-brand-700' : 'border-slate-200 text-slate-500 hover:border-brand-200 hover:text-brand-600 dark:border-slate-600 dark:text-slate-300'}">${EDITOR_FIGURE_ALIGN_LABELS[align]}</button>
             `).join('');
             const sizeButtons = ['auto', 'small', 'medium', 'large'].map(size => `
                 <button type="button" onclick="window.setEditorFigureLayout('size', '${size}')"
@@ -636,14 +640,14 @@
             popover.innerHTML = `
                 <div class="mb-2 flex items-center justify-between border-b border-slate-100 px-1 pb-1.5 font-bold dark:border-slate-700">
                     <span><i class="fa-solid fa-sliders mr-1 text-brand-500"></i>插图排版</span>
-                    <button type="button" onclick="document.getElementById('editorFigureLayoutPopover').remove()" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark"></i></button>
+                    <button type="button" onclick="document.getElementById('editorFigureLayoutPopover').remove()" aria-label="关闭插图排版" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark"></i></button>
                 </div>
                 <div class="mb-2">
                     <div class="mb-1 text-[10px] text-slate-400">位置</div>
-                    <div class="flex gap-1">${alignButtons}</div>
+                    <div class="grid grid-cols-2 gap-1">${alignButtons}</div>
                 </div>
                 <div>
-                    <div class="mb-1 flex justify-between text-[10px] text-slate-400"><span>尺寸</span><span>中/大图自动改为下方居右</span></div>
+                    <div class="mb-1 flex justify-between text-[10px] text-slate-400"><span>尺寸</span><span>${layout.align === 'right' ? '中/大图自动改为下方居右' : '下方布局生效'}</span></div>
                     <div class="flex gap-1">${sizeButtons}</div>
                 </div>
                 <div class="mt-2 text-[9px] text-slate-400">随题目保存后写入题库</div>

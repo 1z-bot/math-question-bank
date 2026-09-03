@@ -436,6 +436,7 @@ def test_quiz_legacy_right_default_respects_persisted_custom_alignment():
 @pytest.mark.parametrize(
     ("figure_align", "figure_size", "expected_width", "expected_height"),
     [
+        ("bottom_left", "small", "5.0cm", "4.0cm"),
         ("center", "small", "5.0cm", "4.0cm"),
         ("center", "medium", "8.0cm", "6.0cm"),
         ("bottom_right", "large", "11.0cm", "8.0cm"),
@@ -475,6 +476,7 @@ def test_latex_export_maps_explicit_figure_size_by_alignment(
 @pytest.mark.parametrize(
     ("figure_align", "figure_size", "expected_width", "expected_height"),
     [
+        ("bottom_left", "large", "11.0cm", "8.0cm"),
         ("center", "medium", "8.0cm", "6.0cm"),
         ("bottom_right", "large", "11.0cm", "8.0cm"),
         ("right", "large", "5.0cm", "8.0cm"),
@@ -516,7 +518,14 @@ def test_latex_export_maps_explicit_tikz_size_and_caps_right_layout(
     assert r"\resizebox{4.5cm}{!}{" not in tex
 
 
-def test_large_lower_figure_is_contained_in_a_safe_solution_space_box():
+@pytest.mark.parametrize(
+    ("figure_align", "environment"),
+    [("bottom_left", "flushleft"), ("bottom_right", "flushright")],
+)
+def test_large_lower_figure_is_contained_in_a_safe_solution_space_box(
+    figure_align,
+    environment,
+):
     from mathbank.paper_helper import build_latex_document
 
     questions = [{
@@ -524,7 +533,7 @@ def test_large_lower_figure_is_contained_in_a_safe_solution_space_box():
             "id": 107,
             "question_type": "detailed_answer",
             "content": "大幅插图题\n\n![](/static/uploads/tall.png)",
-            "figure_align": "bottom_right",
+            "figure_align": figure_align,
             "figure_size": "large",
         },
         "score": 12,
@@ -535,11 +544,19 @@ def test_large_lower_figure_is_contained_in_a_safe_solution_space_box():
 
     assert r"max height=8.0cm" in tex
     assert r"\par\noindent\begin{minipage}[t][8.0cm][t]{\linewidth}" in tex
+    assert rf"\begin{{{environment}}}" in tex
     assert r"\vspace*{3.8cm}" not in tex
     assert r"\vspace*{7.0cm}" not in tex
 
 
-def test_multiple_large_lower_figures_remain_page_breakable():
+@pytest.mark.parametrize(
+    ("figure_align", "environment"),
+    [("bottom_left", "flushleft"), ("bottom_right", "flushright")],
+)
+def test_multiple_large_lower_figures_remain_page_breakable(
+    figure_align,
+    environment,
+):
     from mathbank.paper_helper import build_latex_document
 
     images = "\n\n".join(
@@ -551,7 +568,7 @@ def test_multiple_large_lower_figures_remain_page_breakable():
             "id": 108,
             "question_type": "detailed_answer",
             "content": f"多幅大图题\n\n{images}",
-            "figure_align": "bottom_right",
+            "figure_align": figure_align,
             "figure_size": "large",
         },
         "score": 12,
@@ -563,7 +580,7 @@ def test_multiple_large_lower_figures_remain_page_breakable():
     assert r"\begin{minipage}[t][32.0cm][t]{\linewidth}" not in tex
     assert tex.count(r"max width=11.0cm,max height=8.0cm") == 4
     assert r"\mathbankneedspace{8.5cm}" in tex
-    assert tex.count(r"\begin{flushright}") == 4
+    assert tex.count(rf"\begin{{{environment}}}") == 4
     assert r"\vspace*{7.0cm}" in tex
 
 

@@ -104,6 +104,7 @@ def test_api_questions_crud(client):
         "source": "单元测试",
         "answer_markdown": "答案解析内容",
         "review": "评述内容",
+        "figure_align": "bottom_left",
         "figure_align_custom": "true",
         "figure_size": "large",
         "related_question_id": "",
@@ -119,6 +120,7 @@ def test_api_questions_crud(client):
     assert created_q["content"] == payload["content"]
     assert created_q["question_type"] == "single_choice"
     assert created_q["category_compulsory"] == "必修一"
+    assert created_q["figure_align"] == "bottom_left"
     assert created_q["figure_align_custom"] is True
     assert created_q["figure_size"] == "large"
     
@@ -131,6 +133,7 @@ def test_api_questions_crud(client):
     assert fetched_q["id"] == question_id
     assert fetched_q["answer_markdown"] == "答案解析内容"
     assert fetched_q["review"] == "评述内容"
+    assert fetched_q["figure_align"] == "bottom_left"
     assert fetched_q["figure_align_custom"] is True
     assert fetched_q["figure_size"] == "large"
 
@@ -140,6 +143,7 @@ def test_api_questions_crud(client):
     assert len(response.json()) == 1
     assert response.json()[0]["id"] == question_id
     assert response.json()[0]["has_answer"] is True
+    assert response.json()[0]["figure_align"] == "bottom_left"
     assert response.json()[0]["figure_align_custom"] is True
     assert response.json()[0]["figure_size"] == "large"
     assert "answer_markdown" not in response.json()[0]
@@ -164,6 +168,7 @@ def test_api_questions_crud(client):
     assert updated_q["id"] == question_id
     assert updated_q["content"] == "更新后的API题目干"
     assert updated_q["difficulty"] == "challenge"
+    assert updated_q["figure_align"] == "bottom_left"
     assert updated_q["figure_align_custom"] is True
     assert updated_q["figure_size"] == "large"
 
@@ -626,16 +631,29 @@ def test_figure_align_api(client):
     assert res_get.json()["figure_align_custom"] is True
     assert res_get.json()["figure_size"] == "auto"
 
+    # The legacy position-only endpoint accepts the fourth supported position.
+    res_left = client.post(
+        f"/api/questions/{q_id}/figure_align",
+        data={"figure_align": "bottom_left"},
+        headers=headers,
+    )
+    assert res_left.status_code == 200
+    assert res_left.json()["figure_align"] == "bottom_left"
+    assert client.get(f"/api/questions/{q_id}").json()["figure_align"] == "bottom_left"
+
     # The v9 layout endpoint persists both validated fields atomically.
     res_layout = client.post(
         f"/api/questions/{q_id}/figure_layout",
-        data={"figure_align": "bottom_right", "figure_size": "large"},
+        data={"figure_align": "bottom_left", "figure_size": "large"},
         headers=headers,
     )
     assert res_layout.status_code == 200
-    assert res_layout.json()["figure_align"] == "bottom_right"
+    assert res_layout.json()["figure_align"] == "bottom_left"
     assert res_layout.json()["figure_align_custom"] is True
     assert res_layout.json()["figure_size"] == "large"
+    persisted_left = client.get(f"/api/questions/{q_id}").json()
+    assert persisted_left["figure_align"] == "bottom_left"
+    assert persisted_left["figure_size"] == "large"
 
     # The legacy endpoint remains compatible and must preserve the size.
     res_legacy = client.post(

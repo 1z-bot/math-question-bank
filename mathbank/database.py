@@ -23,6 +23,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 from mathbank.paths import DATABASE_FILE, sqlite_url
 
 
+FIGURE_ALIGN_VALUES = frozenset({"right", "center", "bottom_left", "bottom_right"})
 FIGURE_SIZE_VALUES = frozenset({"auto", "small", "medium", "large"})
 
 
@@ -132,7 +133,7 @@ class Question(Base):
     tikz_reference_image_path = Column(Text, default="")  # 题干 TikZ 自动重绘时的原题参考图
     _content_tikz_assets = Column(Text, default="[]", name="content_tikz_assets")  # 题干多图 TikZ 源码与渲染图映射
     _answer_tikz_assets = Column(Text, default="[]", name="answer_tikz_assets")  # 解答多图 TikZ 源码与渲染图映射
-    figure_align = Column(String(50), default="right")  # 插图排版位置: right (题干右侧), center (下方居中), bottom_right (下方居右)
+    figure_align = Column(String(50), default="right")  # 插图排版位置: right (题干右侧), center (下方居中), bottom_left (下方居左), bottom_right (下方居右)
     figure_align_custom = Column(
         Boolean, nullable=False, default=False, server_default="0"
     )  # 是否由用户明确选择过插图位置
