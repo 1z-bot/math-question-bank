@@ -148,7 +148,10 @@ def test_tex_zip_image_directory_matches_generated_graphics_path(tmp_path):
 
     assert r"\graphicspath{{images/}{./}}" in paper_tex
     assert r"\graphicspath{{images/}{./}}" in answer_sheet_tex
-    assert r"\includegraphics[width=5.0cm]{curve.png}" in paper_tex
+    assert (
+        r"\includegraphics[max width=5.0cm,max height=6.0cm,keepaspectratio]{curve.png}"
+        in paper_tex
+    )
     with zipfile.ZipFile(BytesIO(archive_bytes)) as archive:
         assert "images/curve.png" in archive.namelist()
         assert r"\graphicspath{{images/}{./}}" in archive.read(

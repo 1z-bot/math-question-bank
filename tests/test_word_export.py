@@ -21,6 +21,24 @@ def _package_part(docx_bytes: bytes, name: str) -> bytes:
         return archive.read(name)
 
 
+def _drawing_extents_inches(docx_bytes: bytes) -> list[tuple[float, float]]:
+    root = etree.fromstring(_document_xml(docx_bytes))
+    namespaces = {
+        "wp": "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
+    }
+    emu_per_inch = float(word_export_helper.Inches(1))
+    return [
+        (
+            int(extent.get("cx")) / emu_per_inch,
+            int(extent.get("cy")) / emu_per_inch,
+        )
+        for extent in root.xpath(
+            ".//wp:anchor/wp:extent | .//wp:inline/wp:extent",
+            namespaces=namespaces,
+        )
+    ]
+
+
 def _sample_questions():
     return [
         {
@@ -249,6 +267,183 @@ def test_word_export_preserves_complex_table_and_inline_image_positions(tmp_path
     assert len(table.xpath("./w:tr/w:trPr/w:cantSplit", namespaces=namespaces)) == 4
     assert len(table.xpath("./w:tr/w:tc/w:tcPr/w:vAlign[@w:val='center']", namespaces=namespaces)) == 12
     assert diagnostics["missing_images"] == 0
+
+
+@pytest.mark.parametrize(
+    ("figure_align", "figure_size", "expected_width"),
+    [
+        ("center", None, 2.35),
+        ("bottom_right", "small", 1.97),
+        ("center", "medium", 3.15),
+        ("bottom_right", "large", 4.33),
+        ("right", "large", 1.55),
+    ],
+)
+def test_word_export_maps_detached_figure_size_and_preserves_aspect_ratio(
+    tmp_path,
+    figure_align,
+    figure_size,
+    expected_width,
+):
+    image_path = tmp_path / "sized-figure.png"
+    Image.new("RGB", (600, 300), "white").save(image_path, format="PNG")
+    question = {
+        "id": 57,
+        "question_type": "detailed_answer",
+        "content": "尺寸测试\n\n![插图](/static/uploads/sized-figure.png)",
+        "image_paths": ["/static/uploads/sized-figure.png"],
+        "figure_align": figure_align,
+    }
+    if figure_size is not None:
+        question["figure_size"] = figure_size
+
+    data, diagnostics = build_word_document(
+        "Word 插图尺寸",
+        "",
+        "exam",
+        [{"question": question, "score": 12}],
+        uploads_dir=tmp_path,
+    )
+
+    extents = _drawing_extents_inches(data)
+    assert len(extents) == 1
+    width, height = extents[0]
+    assert width == pytest.approx(expected_width, abs=0.01)
+    assert width / height == pytest.approx(2.0, abs=0.01)
+    assert diagnostics["missing_images"] == 0
+
+
+@pytest.mark.parametrize(
+    ("figure_align", "figure_size", "expected_width"),
+    [
+        ("center", "auto", 1.85),
+        ("right", "auto", 1.85),
+        ("right", "large", 4.33),
+    ],
+)
+def test_word_export_sizes_multi_figures_after_right_to_center_fallback(
+    tmp_path,
+    figure_align,
+    figure_size,
+    expected_width,
+):
+    image_names = ("multi-a.png", "multi-b.png")
+    for name in image_names:
+        Image.new("RGB", (400, 200), "white").save(tmp_path / name, format="PNG")
+    content = "多图测试\n\n" + "\n\n".join(
+        f"![插图](/static/uploads/{name})" for name in image_names
+    )
+
+    data, diagnostics = build_word_document(
+        "Word 多图自动尺寸",
+        "",
+        "exam",
+        [{
+            "question": {
+                "id": 58,
+                "question_type": "detailed_answer",
+                "content": content,
+                "image_paths": [f"/static/uploads/{name}" for name in image_names],
+                "figure_align": figure_align,
+                "figure_size": figure_size,
+            },
+            "score": 12,
+        }],
+        uploads_dir=tmp_path,
+    )
+
+    extents = _drawing_extents_inches(data)
+    assert len(extents) == 2
+    assert [width for width, _height in extents] == pytest.approx(
+        [expected_width, expected_width], abs=0.01
+    )
+    assert diagnostics["missing_images"] == 0
+
+
+@pytest.mark.parametrize("figure_align", ["right", "bottom_right"])
+def test_word_export_caps_tall_detached_figures(tmp_path, figure_align):
+    image_path = tmp_path / "tall-figure.png"
+    Image.new("RGB", (200, 1200), "white").save(image_path, format="PNG")
+
+    data, diagnostics = build_word_document(
+        "Word 竖图边界",
+        "",
+        "exam",
+        [{
+            "question": {
+                "id": 59,
+                "question_type": "detailed_answer",
+                "content": "竖图测试\n\n![插图](/static/uploads/tall-figure.png)",
+                "image_paths": ["/static/uploads/tall-figure.png"],
+                "figure_align": figure_align,
+                "figure_size": "large",
+            },
+            "score": 12,
+        }],
+        uploads_dir=tmp_path,
+    )
+
+    width, height = _drawing_extents_inches(data)[0]
+    assert height == pytest.approx(3.15, abs=0.01)
+    assert width / height == pytest.approx(1 / 6, abs=0.01)
+    assert diagnostics["missing_images"] == 0
+
+
+def test_word_lower_figure_uses_part_of_the_configured_solution_space(tmp_path):
+    image_path = tmp_path / "wide-large.png"
+    Image.new("RGB", (600, 300), "white").save(image_path, format="PNG")
+
+    data, diagnostics = build_word_document(
+        "Word 大图留白",
+        "",
+        "exam",
+        [{
+            "question": {
+                "id": 60,
+                "question_type": "detailed_answer",
+                "content": "大图留白测试\n\n![插图](/static/uploads/wide-large.png)",
+                "image_paths": ["/static/uploads/wide-large.png"],
+                "figure_align": "bottom_right",
+                "figure_size": "large",
+            },
+            "score": 12,
+            "solution_space": "7.0",
+        }],
+        uploads_dir=tmp_path,
+    )
+
+    root = etree.fromstring(_document_xml(data))
+    values = root.xpath(
+        ".//w:body/w:p[last()]/w:pPr/w:spacing/@w:after",
+        namespaces={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"},
+    )
+    assert values
+    space_after_cm = int(values[0]) / 1440 * 2.54
+    assert space_after_cm == pytest.approx(1.2, abs=0.05)
+    assert diagnostics["missing_images"] == 0
+
+
+def test_word_figure_size_is_capped_by_current_page_content_width():
+    builder = word_export_helper.WordExamBuilder(
+        {}, word_export_helper.WordExportDiagnostics()
+    )
+    section = builder.doc.sections[0]
+    section.page_width = word_export_helper.Inches(4)
+    section.left_margin = word_export_helper.Inches(1.25)
+    section.right_margin = word_export_helper.Inches(1.25)
+    section.page_height = word_export_helper.Inches(4)
+    section.top_margin = word_export_helper.Inches(1.25)
+    section.bottom_margin = word_export_helper.Inches(1.25)
+
+    assert builder._detached_figure_width(
+        {"figure_size": "large"}, align="center", image_count=1
+    ) == pytest.approx(1.5)
+    assert builder._detached_figure_width(
+        {"figure_size": "large"}, align="right", image_count=1
+    ) == pytest.approx(1.5)
+    assert builder._detached_figure_height(
+        {"figure_size": "large"}
+    ) == pytest.approx(1.5)
 
 
 def test_word_export_converts_multicolumn_and_multirow_to_native_merges(

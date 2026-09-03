@@ -3,6 +3,7 @@ import sqlite3
 import json
 from pathlib import Path
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Column,
     DateTime,
@@ -20,6 +21,17 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import declarative_base, sessionmaker
 from mathbank.paths import DATABASE_FILE, sqlite_url
+
+
+FIGURE_SIZE_VALUES = frozenset({"auto", "small", "medium", "large"})
+
+
+def normalize_figure_size(value) -> str:
+    """Return the persisted figure-size enum or its safe default."""
+
+    normalized = str(value or "").strip()
+    return normalized if normalized in FIGURE_SIZE_VALUES else "auto"
+
 
 # SQLite Database URL
 SQLALCHEMY_DATABASE_URL = sqlite_url(DATABASE_FILE)
@@ -121,6 +133,12 @@ class Question(Base):
     _content_tikz_assets = Column(Text, default="[]", name="content_tikz_assets")  # 题干多图 TikZ 源码与渲染图映射
     _answer_tikz_assets = Column(Text, default="[]", name="answer_tikz_assets")  # 解答多图 TikZ 源码与渲染图映射
     figure_align = Column(String(50), default="right")  # 插图排版位置: right (题干右侧), center (下方居中), bottom_right (下方居右)
+    figure_align_custom = Column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )  # 是否由用户明确选择过插图位置
+    figure_size = Column(
+        String(20), nullable=False, default="auto", server_default="auto"
+    )  # 题末可分离插图尺寸: auto, small, medium, large
     tags = Column(Text, default="")  # 自定义标签 (逗号分隔或字符串)
     usage_count = Column(Integer, default=0, index=True)  # 组卷引用次数
     created_at = Column(DateTime, default=_utcnow_naive)
@@ -206,6 +224,8 @@ class Question(Base):
             "content_tikz_assets": self.content_tikz_assets,
             "answer_tikz_assets": self.answer_tikz_assets,
             "figure_align": self.figure_align or "right",
+            "figure_align_custom": bool(self.figure_align_custom),
+            "figure_size": normalize_figure_size(self.figure_size),
             "tags": self.tags,
             "usage_count": self.usage_count or 0,
             "created_at": (self.created_at.isoformat() + "Z") if self.created_at else None
@@ -226,6 +246,8 @@ class Question(Base):
             "image_paths": self.display_image_paths,
             "tikz_code": self.tikz_code,
             "figure_align": self.figure_align or "right",
+            "figure_align_custom": bool(self.figure_align_custom),
+            "figure_size": normalize_figure_size(self.figure_size),
             "tags": self.tags,
             "usage_count": self.usage_count or 0,
             "created_at": (self.created_at.isoformat() + "Z") if self.created_at else None
@@ -594,6 +616,9 @@ def init_db():
                 required_columns["questions"].add("tikz_reference_image_path")
             if current_version >= 5:
                 required_columns["questions"].add("content_tikz_assets")
+            if current_version >= 9:
+                required_columns["questions"].add("figure_size")
+                required_columns["questions"].add("figure_align_custom")
             for table_name in core_tables:
                 columns = {
                     row[1]

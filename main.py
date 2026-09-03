@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
 from mathbank.database import (
+    FIGURE_SIZE_VALUES,
     Question,
     QuestionCurriculum,
     QuestionFingerprint as StoredQuestionFingerprint,
@@ -38,6 +39,7 @@ from mathbank.database import (
     engine,
     get_db,
     init_db,
+    normalize_figure_size,
 )
 from mathbank.question_duplicates import (
     QuestionDuplicateInput,
@@ -2763,6 +2765,8 @@ def create_question(
     tikz_reference_image_path: str = Form(""),
     answer_tikz_assets: str = Form("[]"),
     figure_align: str = Form("right"),
+    figure_align_custom: bool = Form(False),
+    figure_size: str = Form("auto"),
     tags: str = Form(""),
     related_question_id: str = Form(""),
     image_paths: str = Form("[]"),  # JSON array string
@@ -2783,6 +2787,9 @@ def create_question(
             r"[0-9a-f]{64}", duplicate_snapshot_hash
         ):
             raise ValueError("查重题目快照格式无效")
+        figure_size = str(figure_size or "").strip()
+        if figure_size not in FIGURE_SIZE_VALUES:
+            raise ValueError("无效的插图尺寸")
         # 规范化填空题下划线为 \fillin 宏
         content = normalize_fillin_macro(content)
 
@@ -2822,6 +2829,8 @@ def create_question(
             tikz_code=parsed_tikz_code,
             tikz_reference_image_path=parsed_tikz_reference_image_path,
             figure_align=figure_align if figure_align in ["right", "center", "bottom_right"] else "right",
+            figure_align_custom=bool(figure_align_custom),
+            figure_size=figure_size,
             tags=tags
         )
         db_question.image_paths = parsed_img_paths
@@ -2946,6 +2955,8 @@ def update_question(
     tikz_reference_image_path: str = Form(""),
     answer_tikz_assets: str = Form("[]"),
     figure_align: str = Form("right"),
+    figure_align_custom: Optional[bool] = Form(None),
+    figure_size: Optional[str] = Form(None),
     tags: str = Form(""),
     related_question_id: str = Form(""),
     image_paths: str = Form("[]"),
@@ -2971,6 +2982,10 @@ def update_question(
             r"[0-9a-f]{64}", duplicate_snapshot_hash
         ):
             raise ValueError("查重题目快照格式无效")
+        if figure_size is not None:
+            figure_size = str(figure_size).strip()
+            if figure_size not in FIGURE_SIZE_VALUES:
+                raise ValueError("无效的插图尺寸")
         # 规范化填空题下划线为 \fillin 宏
         content = normalize_fillin_macro(content)
 
@@ -3010,6 +3025,10 @@ def update_question(
         db_question.tikz_reference_image_path = parsed_tikz_reference_image_path
         if figure_align in ["right", "center", "bottom_right"]:
             db_question.figure_align = figure_align
+        if figure_align_custom is not None:
+            db_question.figure_align_custom = bool(figure_align_custom)
+        if figure_size is not None:
+            db_question.figure_size = figure_size
         db_question.tags = tags
         # Physical cleanup happens only after the database commit succeeds.
         removed_images = set(old_images) - set(parsed_img_paths)
@@ -3145,6 +3164,7 @@ def update_question(
 @app.post("/api/questions/{question_id}/figure_align")
 def update_question_figure_align(
     question_id: int,
+    background_tasks: BackgroundTasks,
     figure_align: str = Form("right"),
     db: Session = Depends(get_db)
 ):
@@ -3154,9 +3174,47 @@ def update_question_figure_align(
     if figure_align not in ["right", "center", "bottom_right"]:
         figure_align = "right"
     db_question.figure_align = figure_align
+    db_question.figure_align_custom = True
     db.commit()
     db.refresh(db_question)
-    return {"status": "success", "question_id": question_id, "figure_align": figure_align}
+    schedule_database_export(background_tasks, operation="update_figure_align")
+    return {
+        "status": "success",
+        "question_id": question_id,
+        "figure_align": figure_align,
+        "figure_align_custom": True,
+    }
+
+
+@app.post("/api/questions/{question_id}/figure_layout")
+def update_question_figure_layout(
+    question_id: int,
+    background_tasks: BackgroundTasks,
+    figure_align: str = Form(...),
+    figure_size: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    db_question = db.query(Question).filter(Question.id == question_id).first()
+    if not db_question:
+        raise HTTPException(status_code=404, detail="未找到对应的题目")
+    if figure_align not in {"right", "center", "bottom_right"}:
+        raise HTTPException(status_code=400, detail="无效的插图排版位置")
+    figure_size = str(figure_size or "").strip()
+    if figure_size not in FIGURE_SIZE_VALUES:
+        raise HTTPException(status_code=400, detail="无效的插图尺寸")
+    db_question.figure_align = figure_align
+    db_question.figure_align_custom = True
+    db_question.figure_size = figure_size
+    db.commit()
+    db.refresh(db_question)
+    schedule_database_export(background_tasks, operation="update_figure_layout")
+    return {
+        "status": "success",
+        "question_id": question_id,
+        "figure_align": db_question.figure_align,
+        "figure_align_custom": True,
+        "figure_size": normalize_figure_size(db_question.figure_size),
+    }
 
 @app.get("/api/questions/{question_id}/associated")
 def get_associated_questions(question_id: int, db: Session = Depends(get_db)):
@@ -5897,6 +5955,10 @@ def export_paper_tex(payload: dict, db: Session = Depends(get_db)):
                 q_dict = dict(q_map[qid])
                 if item.get("figure_align"):
                     q_dict["figure_align"] = item.get("figure_align")
+                if isinstance(item.get("figure_align_custom"), bool):
+                    q_dict["figure_align_custom"] = item.get("figure_align_custom")
+                if isinstance(item.get("figure_size"), str) and item.get("figure_size") in FIGURE_SIZE_VALUES:
+                    q_dict["figure_size"] = item.get("figure_size")
                 q_item = {
                     "question": q_dict,
                     "score": int(item.get("score", 5))
@@ -5947,6 +6009,10 @@ def export_paper_bundle(payload: dict, db: Session = Depends(get_db)):
                 q_dict = dict(q_map[qid])
                 if item.get("figure_align"):
                     q_dict["figure_align"] = item.get("figure_align")
+                if isinstance(item.get("figure_align_custom"), bool):
+                    q_dict["figure_align_custom"] = item.get("figure_align_custom")
+                if isinstance(item.get("figure_size"), str) and item.get("figure_size") in FIGURE_SIZE_VALUES:
+                    q_dict["figure_size"] = item.get("figure_size")
                 q_item = {
                     "question": q_dict,
                     "score": int(item.get("score", 5))
@@ -6066,6 +6132,10 @@ def export_paper_pdf(payload: dict, db: Session = Depends(get_db)):
                 q_dict = dict(q_map[qid])
                 if item.get("figure_align"):
                     q_dict["figure_align"] = item.get("figure_align")
+                if isinstance(item.get("figure_align_custom"), bool):
+                    q_dict["figure_align_custom"] = item.get("figure_align_custom")
+                if isinstance(item.get("figure_size"), str) and item.get("figure_size") in FIGURE_SIZE_VALUES:
+                    q_dict["figure_size"] = item.get("figure_size")
                 q_item = {
                     "question": q_dict,
                     "score": int(item.get("score", 5))
@@ -6157,6 +6227,10 @@ def export_paper_word(payload: dict, db: Session = Depends(get_db)):
             q_dict = dict(q_map[qid])
             if item.get("figure_align"):
                 q_dict["figure_align"] = item.get("figure_align")
+            if isinstance(item.get("figure_align_custom"), bool):
+                q_dict["figure_align_custom"] = item.get("figure_align_custom")
+            if isinstance(item.get("figure_size"), str) and item.get("figure_size") in FIGURE_SIZE_VALUES:
+                q_dict["figure_size"] = item.get("figure_size")
             q_item = {
                 "question": q_dict,
                 "score": int(item.get("score", 5)),

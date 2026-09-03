@@ -104,6 +104,8 @@ def test_api_questions_crud(client):
         "source": "单元测试",
         "answer_markdown": "答案解析内容",
         "review": "评述内容",
+        "figure_align_custom": "true",
+        "figure_size": "large",
         "related_question_id": "",
         "image_paths": "[]"
     }
@@ -117,6 +119,8 @@ def test_api_questions_crud(client):
     assert created_q["content"] == payload["content"]
     assert created_q["question_type"] == "single_choice"
     assert created_q["category_compulsory"] == "必修一"
+    assert created_q["figure_align_custom"] is True
+    assert created_q["figure_size"] == "large"
     
     question_id = created_q["id"]
 
@@ -127,6 +131,8 @@ def test_api_questions_crud(client):
     assert fetched_q["id"] == question_id
     assert fetched_q["answer_markdown"] == "答案解析内容"
     assert fetched_q["review"] == "评述内容"
+    assert fetched_q["figure_align_custom"] is True
+    assert fetched_q["figure_size"] == "large"
 
     # 4. Filter list of questions
     response = client.get("/api/questions?compulsory=必修一&difficulty=medium")
@@ -134,6 +140,8 @@ def test_api_questions_crud(client):
     assert len(response.json()) == 1
     assert response.json()[0]["id"] == question_id
     assert response.json()[0]["has_answer"] is True
+    assert response.json()[0]["figure_align_custom"] is True
+    assert response.json()[0]["figure_size"] == "large"
     assert "answer_markdown" not in response.json()[0]
 
     # Filter with mismatching criteria
@@ -143,6 +151,8 @@ def test_api_questions_crud(client):
 
     # 5. Update the question
     update_payload = payload.copy()
+    update_payload.pop("figure_align_custom")
+    update_payload.pop("figure_size")
     update_payload["content"] = "更新后的API题目干"
     update_payload["difficulty"] = "challenge"
     
@@ -154,6 +164,15 @@ def test_api_questions_crud(client):
     assert updated_q["id"] == question_id
     assert updated_q["content"] == "更新后的API题目干"
     assert updated_q["difficulty"] == "challenge"
+    assert updated_q["figure_align_custom"] is True
+    assert updated_q["figure_size"] == "large"
+
+    update_payload["figure_align_custom"] = "false"
+    response = client.put(
+        f"/api/questions/{question_id}", data=update_payload, headers=headers
+    )
+    assert response.status_code == 200
+    assert response.json()["question"]["figure_align_custom"] is False
 
     # 6. Delete the question
     response = client.delete(f"/api/questions/{question_id}", headers=headers)
@@ -591,16 +610,123 @@ def test_figure_align_api(client):
     assert response.status_code == 200
     q_id = response.json()["question"]["id"]
     assert response.json()["question"]["figure_align"] == "right"
+    assert response.json()["question"]["figure_align_custom"] is False
+    assert response.json()["question"]["figure_size"] == "auto"
 
     # Update figure align to 'center' via dedicated endpoint
     res_center = client.post(f"/api/questions/{q_id}/figure_align", data={"figure_align": "center"}, headers=headers)
     assert res_center.status_code == 200
     assert res_center.json()["figure_align"] == "center"
+    assert res_center.json()["figure_align_custom"] is True
 
     # Query back
     res_get = client.get(f"/api/questions/{q_id}")
     assert res_get.status_code == 200
     assert res_get.json()["figure_align"] == "center"
+    assert res_get.json()["figure_align_custom"] is True
+    assert res_get.json()["figure_size"] == "auto"
+
+    # The v9 layout endpoint persists both validated fields atomically.
+    res_layout = client.post(
+        f"/api/questions/{q_id}/figure_layout",
+        data={"figure_align": "bottom_right", "figure_size": "large"},
+        headers=headers,
+    )
+    assert res_layout.status_code == 200
+    assert res_layout.json()["figure_align"] == "bottom_right"
+    assert res_layout.json()["figure_align_custom"] is True
+    assert res_layout.json()["figure_size"] == "large"
+
+    # The legacy endpoint remains compatible and must preserve the size.
+    res_legacy = client.post(
+        f"/api/questions/{q_id}/figure_align",
+        data={"figure_align": "right"},
+        headers=headers,
+    )
+    assert res_legacy.status_code == 200
+    res_get = client.get(f"/api/questions/{q_id}")
+    assert res_get.json()["figure_align"] == "right"
+    assert res_get.json()["figure_align_custom"] is True
+    assert res_get.json()["figure_size"] == "large"
+
+    for invalid_layout in (
+        {"figure_align": "floating", "figure_size": "medium"},
+        {"figure_align": "center", "figure_size": "huge"},
+    ):
+        invalid = client.post(
+            f"/api/questions/{q_id}/figure_layout",
+            data=invalid_layout,
+            headers=headers,
+        )
+        assert invalid.status_code == 400
+
+    unchanged = client.get(f"/api/questions/{q_id}").json()
+    assert unchanged["figure_align"] == "right"
+    assert unchanged["figure_align_custom"] is True
+    assert unchanged["figure_size"] == "large"
+
+
+def test_paper_export_routes_forward_request_figure_size(client, db_session):
+    question = Question(
+        content="插图导出透传题",
+        question_type="detailed_answer",
+        figure_align="right",
+        figure_size="small",
+    )
+    db_session.add(question)
+    db_session.commit()
+    captured_questions = []
+
+    def capture_latex(_title, _subtitle, _paper_type, questions_data, **_kwargs):
+        captured_questions.append(questions_data)
+        return r"\documentclass{article}\begin{document}ok\end{document}"
+
+    def capture_word(_title, _subtitle, _paper_type, questions_data, **_kwargs):
+        captured_questions.append(questions_data)
+        return b"PK-docx", {
+            "native_formulas": 0,
+            "fallback_formulas": 0,
+            "failed_formulas": 0,
+            "missing_images": 0,
+            "answer_card_omitted": False,
+        }
+
+    payload = {
+        "title": "插图尺寸透传",
+        "paper_type": "exam",
+        "questions": [{
+            "id": question.id,
+            "score": 12,
+            "figure_align": "bottom_right",
+            "figure_align_custom": True,
+            "figure_size": "large",
+        }],
+    }
+    headers = {"X-Local-Token": LOCAL_TOKEN}
+    with (
+        patch("main.build_latex_document", side_effect=capture_latex),
+        patch("main.collect_referenced_images", return_value=[]),
+        patch("main.create_tex_zip_package", return_value=b"PK-tex"),
+        patch("main.compile_tex_to_pdf", return_value=(b"%PDF-test", "")),
+        patch("main.create_full_bundle_zip_package", return_value=b"PK-bundle"),
+        patch("main.build_word_document", side_effect=capture_word),
+        patch("main.create_word_bundle_zip", return_value=b"PK-word"),
+    ):
+        for endpoint in (
+            "/api/paper/export/tex",
+            "/api/paper/export/bundle",
+            "/api/paper/export/pdf",
+            "/api/paper/export/word",
+        ):
+            response = client.post(endpoint, json=payload, headers=headers)
+            assert response.status_code == 200, (endpoint, response.text)
+
+    assert captured_questions
+    for questions_data in captured_questions:
+        exported_question = questions_data[0]["question"]
+        assert exported_question["figure_align"] == "bottom_right"
+        assert exported_question["figure_align_custom"] is True
+        assert exported_question["figure_size"] == "large"
 
 
 def test_question_persists_editable_tikz_assets_and_original_reference(client):

@@ -170,6 +170,9 @@ let bankQuestionsRetryTimer = null;
                     : '',
                 content_tikz_assets: JSON.stringify(TikzState.contentAssets),
                 answer_tikz_assets: JSON.stringify(TikzState.answerAssets),
+                figure_align: FigureLayoutState.align,
+                figure_size: FigureLayoutState.size,
+                figure_align_custom: FigureLayoutState.customAlign,
                 tags: document.getElementById('editTags') ? document.getElementById('editTags').value : ''
             };
             originalQuestionState = {
@@ -190,10 +193,84 @@ let bankQuestionsRetryTimer = null;
                 tikz_reference_image_path: snapshot.tikz_reference_image_path || '',
                 content_tikz_assets: snapshot.content_tikz_assets || '[]',
                 answer_tikz_assets: snapshot.answer_tikz_assets || '[]',
+                figure_align: snapshot.figure_align || 'right',
+                figure_size: snapshot.figure_size || 'auto',
+                figure_align_custom: Boolean(snapshot.figure_align_custom),
                 tags: snapshot.tags
             };
         }
         window.backupEditorState = backupEditorState;
+
+        function commitEditorFigureLayoutBaseline(
+            questionId,
+            figureAlign,
+            figureSize,
+            figureAlignCustom = true
+        ) {
+            const normalizedId = Number(questionId);
+            if (!originalQuestionState || !window.EditorState
+                    || EditorState.questionId !== normalizedId
+                    || Number(originalQuestionState.id) !== normalizedId) {
+                return false;
+            }
+            if (!['right', 'center', 'bottom_right'].includes(figureAlign)) return false;
+            if (!['auto', 'small', 'medium', 'large'].includes(figureSize)) return false;
+            originalQuestionState.figure_align = figureAlign;
+            originalQuestionState.figure_size = figureSize;
+            originalQuestionState.figure_align_custom = Boolean(figureAlignCustom);
+            return true;
+        }
+        window.commitEditorFigureLayoutBaseline = commitEditorFigureLayoutBaseline;
+
+        function reconcileEditorFigureLayout(questionId, confirmed, requested, succeeded) {
+            const normalizedId = Number(questionId);
+            if (!originalQuestionState || !window.EditorState || !window.FigureLayoutState
+                    || EditorState.questionId !== normalizedId
+                    || Number(originalQuestionState.id) !== normalizedId
+                    || typeof FigureLayoutState.snapshot !== 'function') {
+                return false;
+            }
+            const validAlign = value => ['right', 'center', 'bottom_right'].includes(value);
+            const validSize = value => ['auto', 'small', 'medium', 'large'].includes(value);
+            const confirmedAlign = confirmed && confirmed.figure_align;
+            const confirmedSize = confirmed && confirmed.figure_size;
+            const confirmedCustom = Boolean(confirmed && confirmed.figure_align_custom);
+            const requestedAlign = requested && requested.figure_align;
+            const requestedSize = requested && requested.figure_size;
+            const requestedCustom = Boolean(requested && requested.figure_align_custom);
+            if (!validAlign(confirmedAlign) || !validSize(confirmedSize)
+                    || !validAlign(requestedAlign) || !validSize(requestedSize)) {
+                return false;
+            }
+
+            const current = FigureLayoutState.snapshot();
+            const baselineAlign = originalQuestionState.figure_align || 'right';
+            const baselineSize = originalQuestionState.figure_size || 'auto';
+            const baselineCustom = Boolean(originalQuestionState.figure_align_custom);
+            const wasClean = current.figure_align === baselineAlign
+                && current.figure_size === baselineSize
+                && Boolean(current.figure_align_custom) === baselineCustom;
+            const matchesRequested = current.figure_align === requestedAlign
+                && current.figure_size === requestedSize
+                && Boolean(current.figure_align_custom) === requestedCustom;
+
+            if (succeeded) {
+                originalQuestionState.figure_align = confirmedAlign;
+                originalQuestionState.figure_size = confirmedSize;
+                originalQuestionState.figure_align_custom = confirmedCustom;
+                if (wasClean || matchesRequested) {
+                    FigureLayoutState.setAlign(confirmedAlign);
+                    FigureLayoutState.setSize(confirmedSize);
+                    FigureLayoutState.setCustomAlign(confirmedCustom);
+                }
+            } else if (matchesRequested) {
+                FigureLayoutState.setAlign(baselineAlign);
+                FigureLayoutState.setSize(baselineSize);
+                FigureLayoutState.setCustomAlign(baselineCustom);
+            }
+            return true;
+        }
+        window.reconcileEditorFigureLayout = reconcileEditorFigureLayout;
 
         function editorMatchesBackupSnapshot(snapshot) {
             if (!snapshot) return false;
@@ -216,6 +293,9 @@ let bankQuestionsRetryTimer = null;
                 : '';
             const currentContentTikzAssets = JSON.stringify(TikzState.contentAssets);
             const currentAnswerTikzAssets = JSON.stringify(TikzState.answerAssets);
+            const currentFigureAlign = FigureLayoutState.align;
+            const currentFigureSize = FigureLayoutState.size;
+            const currentFigureAlignCustom = FigureLayoutState.customAlign;
             const currentTags = document.getElementById('editTags') ? document.getElementById('editTags').value : '';
 
             return currentContent === snapshot.content &&
@@ -233,6 +313,9 @@ let bankQuestionsRetryTimer = null;
                    currentTikzReferencePath === (snapshot.tikz_reference_image_path || '') &&
                    currentContentTikzAssets === (snapshot.content_tikz_assets || '[]') &&
                    currentAnswerTikzAssets === (snapshot.answer_tikz_assets || '[]') &&
+                   currentFigureAlign === (snapshot.figure_align || 'right') &&
+                   currentFigureSize === (snapshot.figure_size || 'auto') &&
+                   currentFigureAlignCustom === Boolean(snapshot.figure_align_custom) &&
                    currentTags === snapshot.tags;
         }
         window.editorMatchesBackupSnapshot = editorMatchesBackupSnapshot;
@@ -469,6 +552,9 @@ let bankQuestionsRetryTimer = null;
                     : '',
                 content_tikz_assets: TikzState.contentAssets,
                 answer_tikz_assets: TikzState.answerAssets,
+                figure_align: FigureLayoutState.align,
+                figure_size: FigureLayoutState.size,
+                figure_align_custom: FigureLayoutState.customAlign,
                 isDraft: true,
                 updated_at: new Date().toISOString()
             };
@@ -546,6 +632,7 @@ let bankQuestionsRetryTimer = null;
                 : [];
             uploadedImages = allDraftImages.filter(path => !uploadedAnswerImages.includes(path));
             window.hydrateTikzState(draft);
+            FigureLayoutState.hydrate(draft);
             const hiddenTikzReferencePaths = new Set(TikzState.referencePaths());
             uploadedImages = uploadedImages.filter(path => !hiddenTikzReferencePaths.has(path));
             renderIllustrationBadges();
@@ -1610,6 +1697,10 @@ let bankQuestionsRetryTimer = null;
                 
                 const preparedHtml = renderQuestionPreviewContent(previewContainer, text);
                 renderQuestionPreviewContent(paperContainer, text, { preparedHtml: preparedHtml });
+                if (typeof window.applyEditorFigureLayoutPreview === 'function') {
+                    window.applyEditorFigureLayoutPreview(previewContainer, text);
+                    window.applyEditorFigureLayoutPreview(paperContainer, text);
+                }
             };
 
             const updateAnswerPreview = () => {

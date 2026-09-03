@@ -519,6 +519,48 @@
             }
         };
         window.TikzState = TikzState;
+        const FigureLayoutState = {
+            align: 'right',
+            size: 'auto',
+            customAlign: false,
+            reset() {
+                this.align = 'right';
+                this.size = 'auto';
+                this.customAlign = false;
+            },
+            hydrate(record) {
+                const align = String(record && record.figure_align || 'right');
+                const size = String(record && record.figure_size || 'auto');
+                this.align = ['right', 'center', 'bottom_right'].includes(align)
+                    ? align
+                    : 'right';
+                this.size = ['auto', 'small', 'medium', 'large'].includes(size)
+                    ? size
+                    : 'auto';
+                this.customAlign = Boolean(record && record.figure_align_custom);
+            },
+            setAlign(value) {
+                if (['right', 'center', 'bottom_right'].includes(value)) {
+                    this.align = value;
+                }
+            },
+            setSize(value) {
+                if (['auto', 'small', 'medium', 'large'].includes(value)) {
+                    this.size = value;
+                }
+            },
+            setCustomAlign(value) {
+                this.customAlign = Boolean(value);
+            },
+            snapshot() {
+                return {
+                    figure_align: this.align,
+                    figure_size: this.size,
+                    figure_align_custom: this.customAlign
+                };
+            }
+        };
+        window.FigureLayoutState = FigureLayoutState;
         let originalQuestionState = null;
         let contentOcrAbortController = null;
         let answerOcrAbortController = null;

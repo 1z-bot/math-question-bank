@@ -45,6 +45,8 @@ def test_question_crud_operations(db_session):
     assert d["content_tikz_assets"] == []
     assert d["image_paths"] == ["/static/uploads/test_img.png"]
     assert d["association_group_id"] == "group_123"
+    assert d["figure_align_custom"] is False
+    assert d["figure_size"] == "auto"
     
     s = q.to_summary_dict()
     assert s["id"] == q.id
@@ -54,6 +56,8 @@ def test_question_crud_operations(db_session):
     assert "tikz_reference_image_path" not in s  # OCR reference stays detail-only
     assert s["image_paths"] == ["/static/uploads/test_img.png"]
     assert s["has_answer"] is True
+    assert s["figure_align_custom"] is False
+    assert s["figure_size"] == "auto"
     
     # 2. Read / Query Question
     retrieved = db_session.query(Question).filter_by(id=q.id).first()

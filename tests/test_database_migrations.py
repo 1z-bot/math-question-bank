@@ -161,6 +161,20 @@ def _create_version_seven_database(path):
     )
 
 
+def _create_version_eight_database(path):
+    engine = create_engine(f"sqlite:///{path}")
+    database_module.Base.metadata.create_all(bind=engine)
+    engine.dispose()
+    with _sqlite_connection(path) as connection:
+        connection.execute("ALTER TABLE questions DROP COLUMN figure_size")
+        connection.execute("ALTER TABLE questions DROP COLUMN figure_align_custom")
+        connection.execute("PRAGMA user_version=8")
+        connection.execute(
+            "INSERT INTO questions (id, content, image_paths) "
+            "VALUES (1, '已存 v8 题目', '[]')"
+        )
+
+
 def test_migration_repairs_legacy_relationships_and_adds_constraints(tmp_path, monkeypatch):
     database_path = tmp_path / "legacy.db"
     backup_dir = tmp_path / "backups"
@@ -340,7 +354,7 @@ def test_version_six_rebuilds_band_indexes_transactionally(tmp_path, monkeypatch
     result = db_migrations.migrate_database(engine)
 
     assert result["from_version"] == 6
-    assert result["to_version"] == 8
+    assert result["to_version"] == db_migrations.LATEST_SCHEMA_VERSION
     assert result["rebuilt_question_fingerprint_indexes"] == 8
     assert result["added_question_fingerprint_text_columns"] == 8
     assert result["added_question_fingerprint_text_indexes"] == 8
@@ -348,7 +362,9 @@ def test_version_six_rebuilds_band_indexes_transactionally(tmp_path, monkeypatch
     assert list(snapshot_dir.glob("*.db"))
     assert list(snapshot_dir.glob("*.sha256"))
     with _sqlite_connection(database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 8
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == (
+            db_migrations.LATEST_SCHEMA_VERSION
+        )
         assert connection.execute(
             "SELECT exact_hash, token_count, band0, band7, text_band0, "
             "text_band7, status "
@@ -387,7 +403,9 @@ def test_init_db_upgrades_v6_indexes_without_create_all_masking_them(
     database_module.init_db()
 
     with _sqlite_connection(database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 8
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == (
+            db_migrations.LATEST_SCHEMA_VERSION
+        )
         for index_name, expected_columns in (
             db_migrations.QUESTION_FINGERPRINT_INDEXES.items()
         ):
@@ -455,7 +473,7 @@ def test_version_seven_adds_text_bands_transactionally(tmp_path, monkeypatch):
     result = db_migrations.migrate_database(engine)
 
     assert result["from_version"] == 7
-    assert result["to_version"] == 8
+    assert result["to_version"] == db_migrations.LATEST_SCHEMA_VERSION
     assert result["rebuilt_question_fingerprint_indexes"] == 0
     assert result["added_question_fingerprint_text_columns"] == 8
     assert result["added_question_fingerprint_text_indexes"] == 8
@@ -463,7 +481,9 @@ def test_version_seven_adds_text_bands_transactionally(tmp_path, monkeypatch):
     assert list(snapshot_dir.glob("*.db"))
     assert list(snapshot_dir.glob("*.sha256"))
     with _sqlite_connection(database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 8
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == (
+            db_migrations.LATEST_SCHEMA_VERSION
+        )
         table_info = connection.execute(
             'PRAGMA table_info("question_fingerprints")'
         ).fetchall()
@@ -536,6 +556,132 @@ def test_version_seven_text_index_failure_rolls_back_columns_and_indexes(
                 )
             )
             assert actual_columns == expected_columns
+
+
+def test_version_eight_adds_figure_size_after_verified_backup(tmp_path, monkeypatch):
+    database_path = tmp_path / "version-eight.db"
+    _create_version_eight_database(database_path)
+    snapshot_dir = tmp_path / "schema_snapshots"
+    monkeypatch.setattr(db_migrations, "SCHEMA_SNAPSHOT_DIR", snapshot_dir)
+    engine = create_engine(f"sqlite:///{database_path}")
+
+    result = db_migrations.migrate_database(engine)
+
+    assert result["from_version"] == 8
+    assert result["to_version"] == 9
+    assert result["added_figure_size"] == 1
+    assert result["added_figure_align_custom"] == 1
+    assert result["backup"]
+    assert list(snapshot_dir.glob("*.sha256"))
+    with _sqlite_connection(database_path) as connection:
+        table_info = connection.execute(
+            'PRAGMA table_info("questions")'
+        ).fetchall()
+        info_by_name = {row[1]: row for row in table_info}
+        figure_size_info = info_by_name["figure_size"]
+        assert figure_size_info[2].upper() == "VARCHAR(20)"
+        assert figure_size_info[3] == 1
+        assert figure_size_info[4] == "'auto'"
+        figure_align_custom_info = info_by_name["figure_align_custom"]
+        assert figure_align_custom_info[2].upper() == "INTEGER"
+        assert figure_align_custom_info[3] == 1
+        assert str(figure_align_custom_info[4]).strip("'\"") == "0"
+        assert connection.execute(
+            "SELECT figure_size, figure_align_custom FROM questions WHERE id = 1"
+        ).fetchone() == ("auto", 0)
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 9
+
+    with _sqlite_connection(Path(result["backup"])) as backup_connection:
+        backup_columns = {
+            row[1]
+            for row in backup_connection.execute('PRAGMA table_info("questions")')
+        }
+        assert "figure_size" not in backup_columns
+        assert "figure_align_custom" not in backup_columns
+        assert backup_connection.execute(
+            "PRAGMA user_version"
+        ).fetchone()[0] == 8
+
+
+def test_init_db_upgrades_v8_before_orm_metadata_can_mask_the_column(
+    tmp_path, monkeypatch
+):
+    database_path = tmp_path / "init-version-eight.db"
+    _create_version_eight_database(database_path)
+    snapshot_dir = tmp_path / "schema_snapshots"
+    engine = create_engine(f"sqlite:///{database_path}")
+    monkeypatch.setattr(database_module, "engine", engine)
+    monkeypatch.setattr(db_migrations, "SCHEMA_SNAPSHOT_DIR", snapshot_dir)
+
+    database_module.init_db()
+
+    with _sqlite_connection(database_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert connection.execute(
+            "SELECT figure_size, figure_align_custom FROM questions WHERE id = 1"
+        ).fetchone() == ("auto", 0)
+    assert list(snapshot_dir.glob("*.db"))
+    assert list(snapshot_dir.glob("*.sha256"))
+
+
+def test_version_eight_figure_size_ddl_failure_rolls_back(tmp_path, monkeypatch):
+    database_path = tmp_path / "version-eight-rollback.db"
+    _create_version_eight_database(database_path)
+    monkeypatch.setattr(
+        db_migrations, "SCHEMA_SNAPSHOT_DIR", tmp_path / "schema_snapshots"
+    )
+    engine = create_engine(f"sqlite:///{database_path}")
+
+    def inject_failure(_conn, _cursor, statement, _parameters, _context, _many):
+        if "ADD COLUMN figure_size" in statement:
+            raise RuntimeError("injected figure-size migration failure")
+
+    event.listen(engine, "after_cursor_execute", inject_failure)
+    with pytest.raises(RuntimeError, match="injected figure-size migration failure"):
+        db_migrations.migrate_database(engine)
+    event.remove(engine, "after_cursor_execute", inject_failure)
+
+    with _sqlite_connection(database_path) as connection:
+        columns = {
+            row[1]
+            for row in connection.execute('PRAGMA table_info("questions")')
+        }
+        assert "figure_size" not in columns
+        assert "figure_align_custom" not in columns
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 8
+
+
+def test_current_schema_rejects_invalid_figure_size_values(tmp_path):
+    database_path = tmp_path / "invalid-figure-size.db"
+    engine = create_engine(f"sqlite:///{database_path}")
+    database_module.Base.metadata.create_all(bind=engine)
+    with _sqlite_connection(database_path) as connection:
+        connection.execute(
+            "INSERT INTO questions (content, figure_size) VALUES ('bad size', 'huge')"
+        )
+        connection.execute(
+            f"PRAGMA user_version={db_migrations.LATEST_SCHEMA_VERSION}"
+        )
+
+    with pytest.raises(RuntimeError, match="figure_size 包含无效值"):
+        db_migrations.migrate_database(engine)
+
+
+def test_current_schema_rejects_invalid_figure_align_custom_values(tmp_path):
+    database_path = tmp_path / "invalid-figure-align-custom.db"
+    engine = create_engine(f"sqlite:///{database_path}")
+    database_module.Base.metadata.create_all(bind=engine)
+    with _sqlite_connection(database_path) as connection:
+        connection.execute(
+            "INSERT INTO questions (content, figure_align_custom) "
+            "VALUES ('bad custom flag', 2)"
+        )
+        connection.execute(
+            f"PRAGMA user_version={db_migrations.LATEST_SCHEMA_VERSION}"
+        )
+
+    with pytest.raises(RuntimeError, match="figure_align_custom 包含无效值"):
+        db_migrations.migrate_database(engine)
 
 
 @pytest.mark.parametrize("malformed_kind", ["unique", "partial"])

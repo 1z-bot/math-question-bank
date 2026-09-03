@@ -18,7 +18,7 @@ from sqlalchemy.engine import Engine
 from mathbank.paths import SCHEMA_SNAPSHOT_DIR
 
 
-LATEST_SCHEMA_VERSION = 8
+LATEST_SCHEMA_VERSION = 9
 LEGACY_REQUIRED_TABLES = {
     "questions",
     "question_curriculums",
@@ -252,6 +252,66 @@ def _ensure_tikz_asset_columns(connection) -> dict[str, int]:
             )
         stats[f"added_{column}"] = int(added)
     return stats
+
+
+def _ensure_figure_layout_columns(connection) -> dict[str, int]:
+    """Add the v9 figure layout preferences without rewriting existing rows."""
+
+    columns = {
+        row[1]
+        for row in connection.exec_driver_sql(
+            'PRAGMA table_info("questions")'
+        ).fetchall()
+    }
+    additions = {
+        "figure_size": "VARCHAR(20) NOT NULL DEFAULT 'auto'",
+        "figure_align_custom": "INTEGER NOT NULL DEFAULT 0",
+    }
+    stats: dict[str, int] = {}
+    for column, definition in additions.items():
+        added = column not in columns
+        if added:
+            connection.exec_driver_sql(
+                f"ALTER TABLE questions ADD COLUMN {column} {definition}"
+            )
+        stats[f"added_{column}"] = int(added)
+    return stats
+
+
+def _validate_figure_layout_schema(connection) -> None:
+    """Fail closed when a v9 database lacks either layout preference."""
+
+    table_info = connection.exec_driver_sql(
+        'PRAGMA table_info("questions")'
+    ).fetchall()
+    info_by_name = {row[1]: row for row in table_info}
+    column_info = info_by_name.get("figure_size")
+    if column_info is None:
+        raise RuntimeError("数据库表 questions 缺少核心字段: figure_size")
+    if int(column_info[3]) != 1 or str(column_info[4]).strip("'\"") != "auto":
+        raise RuntimeError("questions.figure_size 结构异常")
+    invalid_count = int(
+        connection.exec_driver_sql(
+            "SELECT COUNT(*) FROM questions "
+            "WHERE figure_size NOT IN ('auto', 'small', 'medium', 'large')"
+        ).scalar_one()
+    )
+    if invalid_count:
+        raise RuntimeError("questions.figure_size 包含无效值")
+    custom_info = info_by_name.get("figure_align_custom")
+    if custom_info is None:
+        raise RuntimeError(
+            "数据库表 questions 缺少核心字段: figure_align_custom"
+        )
+    if int(custom_info[3]) != 1 or str(custom_info[4]).strip("'\"") != "0":
+        raise RuntimeError("questions.figure_align_custom 结构异常")
+    invalid_custom_count = int(
+        connection.exec_driver_sql(
+            "SELECT COUNT(*) FROM questions WHERE figure_align_custom NOT IN (0, 1)"
+        ).scalar_one()
+    )
+    if invalid_custom_count:
+        raise RuntimeError("questions.figure_align_custom 包含无效值")
 
 
 def _validate_question_fingerprint_schema(
@@ -554,7 +614,9 @@ def _rebuild_relationship_tables(engine: Engine) -> dict[str, int]:
                 connection.exec_driver_sql("SELECT COUNT(*) FROM paper_questions").scalar_one()
             )
             tikz_column_stats = _ensure_tikz_asset_columns(connection)
+            figure_layout_stats = _ensure_figure_layout_columns(connection)
             added_question_fingerprints = _ensure_question_fingerprint_table(connection)
+            _validate_figure_layout_schema(connection)
 
             violations = connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
             if violations:
@@ -568,6 +630,7 @@ def _rebuild_relationship_tables(engine: Engine) -> dict[str, int]:
                 "removed_paper_questions": before_paper_questions - remaining_paper_questions,
                 "added_question_fingerprints": added_question_fingerprints,
                 **tikz_column_stats,
+                **figure_layout_stats,
             }
         except Exception:
             if transaction_started:
@@ -590,9 +653,11 @@ def _upgrade_derived_schema(engine: Engine) -> dict[str, int]:
             connection.exec_driver_sql("BEGIN IMMEDIATE")
             transaction_started = True
             stats = _ensure_tikz_asset_columns(connection)
+            stats.update(_ensure_figure_layout_columns(connection))
             stats["added_question_fingerprints"] = (
                 _ensure_question_fingerprint_table(connection)
             )
+            _validate_figure_layout_schema(connection)
             connection.exec_driver_sql(f"PRAGMA user_version={LATEST_SCHEMA_VERSION}")
             connection.exec_driver_sql("COMMIT")
             transaction_started = False
@@ -608,7 +673,7 @@ def _upgrade_v6_or_v7_fingerprint_schema(
     *,
     from_version: int,
 ) -> dict[str, int]:
-    """Upgrade v6/v7 indexes and add v8 text bands in one transaction."""
+    """Upgrade v6/v7 indexes, v8 text bands, and the v9 figure layout."""
 
     if from_version not in {6, 7}:
         raise ValueError(f"unsupported fingerprint schema upgrade: {from_version}")
@@ -660,6 +725,8 @@ def _upgrade_v6_or_v7_fingerprint_schema(
                 )
                 added_text_indexes += 1
             _validate_question_fingerprint_schema(connection)
+            figure_layout_stats = _ensure_figure_layout_columns(connection)
+            _validate_figure_layout_schema(connection)
             connection.exec_driver_sql(f"PRAGMA user_version={LATEST_SCHEMA_VERSION}")
             connection.exec_driver_sql("COMMIT")
             transaction_started = False
@@ -667,6 +734,7 @@ def _upgrade_v6_or_v7_fingerprint_schema(
                 "rebuilt_question_fingerprint_indexes": rebuilt_indexes,
                 "added_question_fingerprint_text_columns": 8,
                 "added_question_fingerprint_text_indexes": added_text_indexes,
+                **figure_layout_stats,
             }
         except Exception:
             if transaction_started:
@@ -693,6 +761,7 @@ def migrate_database(
             raise RuntimeError(f"数据库结构不完整，缺少必要数据表: {missing}")
         with engine.connect() as connection:
             _validate_question_fingerprint_schema(connection)
+            _validate_figure_layout_schema(connection)
         return {"from_version": current, "to_version": current, "backup": None}
 
     if not table_names:

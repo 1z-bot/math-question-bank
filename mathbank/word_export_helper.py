@@ -61,6 +61,20 @@ CJK_HEADING_FONT = "SimHei"
 CJK_TITLE_FONT = "STZhongsong"
 LATIN_FONT = "Times New Roman"
 WORD_FILLIN_BLANK_SPACES = 18
+WORD_RIGHT_FIGURE_MAX_WIDTH_INCHES = 1.55
+WORD_AUTO_SINGLE_FIGURE_WIDTH_INCHES = 2.35
+WORD_AUTO_MULTI_FIGURE_WIDTH_INCHES = 1.85
+WORD_FIGURE_SIZE_WIDTHS_INCHES = {
+    "small": 1.97,
+    "medium": 3.15,
+    "large": 4.33,
+}
+WORD_FIGURE_SIZE_HEIGHTS_INCHES = {
+    "small": 1.57,
+    "medium": 2.36,
+    "large": 3.15,
+}
+WORD_AUTO_FIGURE_MAX_HEIGHT_INCHES = 2.36
 STIX_TWO_MATH_PATHS = (
     Path("/System/Library/Fonts/Supplemental/STIXTwoMath.otf"),
     Path("/Library/Fonts/STIXTwoMath.otf"),
@@ -971,14 +985,119 @@ class WordExamBuilder:
         run = p.add_run(heading)
         _set_run_font(run, SECTION_FONT_SIZE, bold=True, cjk_font=CJK_BODY_FONT)
 
-    def _add_floating_right_image(self, paragraph, path: Path, max_width: float = 1.55) -> bool:
+    def _usable_page_width_inches(self) -> float:
+        section = self.doc.sections[0]
+        usable_width = (
+            section.page_width - section.left_margin - section.right_margin
+        )
+        return max(0.1, float(usable_width) / float(Inches(1)))
+
+    def _usable_page_height_inches(self) -> float:
+        section = self.doc.sections[0]
+        usable_height = (
+            section.page_height - section.top_margin - section.bottom_margin
+        )
+        return max(0.1, float(usable_height) / float(Inches(1)))
+
+    def _detached_figure_width(
+        self,
+        question: dict,
+        *,
+        align: str,
+        image_count: int,
+    ) -> float:
+        available_width = self._usable_page_width_inches()
+        if align == "right":
+            return min(WORD_RIGHT_FIGURE_MAX_WIDTH_INCHES, available_width)
+
+        figure_size = str(question.get("figure_size") or "auto").strip()
+        if figure_size == "auto":
+            requested_width = (
+                WORD_AUTO_SINGLE_FIGURE_WIDTH_INCHES
+                if image_count == 1
+                else WORD_AUTO_MULTI_FIGURE_WIDTH_INCHES
+            )
+        else:
+            requested_width = WORD_FIGURE_SIZE_WIDTHS_INCHES.get(
+                figure_size,
+                WORD_AUTO_SINGLE_FIGURE_WIDTH_INCHES
+                if image_count == 1
+                else WORD_AUTO_MULTI_FIGURE_WIDTH_INCHES,
+            )
+        return min(requested_width, available_width)
+
+    def _detached_figure_height(self, question: dict) -> float:
+        figure_size = str(question.get("figure_size") or "auto").strip()
+        requested_height = WORD_FIGURE_SIZE_HEIGHTS_INCHES.get(
+            figure_size,
+            WORD_AUTO_FIGURE_MAX_HEIGHT_INCHES,
+        )
+        return min(requested_height, self._usable_page_height_inches())
+
+    @staticmethod
+    def _fit_image_dimensions(
+        path: Path,
+        *,
+        max_width: float,
+        max_height: float,
+    ) -> tuple[float, float]:
+        from PIL import Image
+
+        with Image.open(path) as image:
+            ratio = image.width / max(image.height, 1)
+        width = min(max_width, max_height * ratio)
+        return width, width / max(ratio, 0.01)
+
+    def _detached_figure_block_height(
+        self,
+        paths: list[Path],
+        *,
+        max_width: float,
+        max_height: float,
+    ) -> float:
+        """Estimate the inline image rows added below a question, in inches."""
+
+        available_width = self._usable_page_width_inches()
+        total_height = 0.0
+        row_width = 0.0
+        row_height = 0.0
+        for path in paths:
+            width, height = self._fit_image_dimensions(
+                path,
+                max_width=max_width,
+                max_height=max_height,
+            )
+            if row_width > 0 and row_width + width > available_width:
+                total_height += row_height
+                row_width = 0.0
+                row_height = 0.0
+            row_width += width
+            row_height = max(row_height, height)
+        return total_height + row_height
+
+    def _add_floating_right_image(
+        self,
+        paragraph,
+        path: Path,
+        max_width: float = WORD_RIGHT_FIGURE_MAX_WIDTH_INCHES,
+        max_height: float = WORD_AUTO_FIGURE_MAX_HEIGHT_INCHES,
+    ) -> bool:
         """
         在 Word 题干段落首行插入原生【四周型右侧文字环绕】插图 (Square Text Wrap)。
         文字可享受 75%+ 的完整宽度空间并于插图左侧自然环绕下流，完全避免无边框表格容器截断。
         """
         try:
+            width, height = self._fit_image_dimensions(
+                path,
+                max_width=max_width,
+                max_height=max_height,
+            )
             run = paragraph.add_run()
-            shape = run.add_picture(str(path), width=Inches(max_width))
+            shape = run.add_picture(
+                str(path),
+                width=Inches(width),
+                height=Inches(height),
+            )
             inline = shape._inline
             cx = inline.extent.cx
             cy = inline.extent.cy
@@ -1023,11 +1142,34 @@ class WordExamBuilder:
         } if preserve_inline_images else set()
         inline_images = [path for path in usable_images if path.name in anchored_names]
         detached_images = [path for path in usable_images if path.name not in anchored_names]
+        if len(detached_images) > 1 and align == "right":
+            align = "center"
+        detached_width = self._detached_figure_width(
+            item.question,
+            align=align,
+            image_count=len(detached_images),
+        )
+        detached_height = self._detached_figure_height(item.question)
+        detached_block_height = 0.0
+        if detached_images and align in {"center", "bottom_right"}:
+            try:
+                detached_block_height = self._detached_figure_block_height(
+                    detached_images,
+                    max_width=detached_width,
+                    max_height=detached_height,
+                )
+            except Exception:
+                detached_block_height = detached_height
         if detached_images and align == "right" and len(detached_images) == 1:
             p = self.doc.add_paragraph()
             self._format_question_paragraph(p, number)
             # 在题干段落首行嵌入四周型右侧文字环绕插图，彻底取消表格容器
-            self._add_floating_right_image(p, detached_images[0], max_width=1.55)
+            self._add_floating_right_image(
+                p,
+                detached_images[0],
+                max_width=detached_width,
+                max_height=detached_height,
+            )
             # single_paragraph=True 确保全文在同一个 Word 段落中，使文字平滑紧贴图片四周型环绕！
             self._add_content_blocks(p, item.stem, single_paragraph=True)
         else:
@@ -1038,14 +1180,22 @@ class WordExamBuilder:
                 fig_p = self.doc.add_paragraph()
                 fig_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if align == "bottom_right" else WD_ALIGN_PARAGRAPH.CENTER
                 for path in detached_images:
-                    self._add_image(fig_p, path, max_width=2.35 if len(detached_images) == 1 else 1.85)
+                    self._add_image(
+                        fig_p,
+                        path,
+                        max_width=detached_width,
+                        max_height=detached_height,
+                    )
 
         if item.choices:
             self.add_choices(item.choices)
 
         if item.question.get("question_type") == "detailed_answer" and item.solution_space > 0:
             spacer = self.doc.add_paragraph()
-            spacer.paragraph_format.space_after = Cm(max(0.2, item.solution_space - 0.3))
+            figure_height_cm = detached_block_height * 2.54
+            spacer.paragraph_format.space_after = Cm(
+                max(0.2, item.solution_space - figure_height_cm - 0.3)
+            )
 
     def _format_question_paragraph(self, paragraph, number: int) -> None:
         paragraph.paragraph_format.left_indent = Cm(0)
@@ -1103,12 +1253,11 @@ class WordExamBuilder:
             width = max_width
             height = None
             if max_height is not None:
-                from PIL import Image
-
-                with Image.open(path) as image:
-                    ratio = image.width / max(image.height, 1)
-                width = min(max_width, max_height * ratio)
-                height = width / max(ratio, 0.01)
+                width, height = self._fit_image_dimensions(
+                    path,
+                    max_width=max_width,
+                    max_height=max_height,
+                )
             if height is None:
                 run.add_picture(str(path), width=Inches(width))
             else:

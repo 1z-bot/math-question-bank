@@ -33,6 +33,64 @@ _AUTO_LATEX_PACKAGES = frozenset({
 })
 _MAX_AUTO_PACKAGE_REPAIRS = 3
 
+_FIGURE_SIZE_LIMITS = {
+    "small": ("5.0cm", "4.0cm"),
+    "medium": ("8.0cm", "6.0cm"),
+    "large": ("11.0cm", "8.0cm"),
+}
+_DEFAULT_FIGURE_MAX_HEIGHT = "6.0cm"
+
+
+def _normalize_figure_size(value: object) -> str:
+    figure_size = str(value or "auto").strip().lower()
+    return figure_size if figure_size in {"auto", *_FIGURE_SIZE_LIMITS} else "auto"
+
+
+def _figure_height_limit_cm(figure_size: str) -> float:
+    height = (
+        _DEFAULT_FIGURE_MAX_HEIGHT
+        if figure_size == "auto"
+        else _FIGURE_SIZE_LIMITS[figure_size][1]
+    )
+    return float(height.removesuffix("cm"))
+
+
+def _bounded_includegraphics(filename: str, width: str, height: str) -> str:
+    """Render an image within both its requested cap and the current line box."""
+
+    image = (
+        rf"\includegraphics[max width={width},max height={height},keepaspectratio]"
+        rf"{{{filename}}}"
+    )
+    return rf"\adjustbox{{max width=\linewidth}}{{{image}}}"
+
+
+def _bounded_tikz(
+    tikz_code: str,
+    *,
+    figure_size: str,
+    figure_align: str,
+) -> str:
+    """Keep right-side TikZ safe while allowing explicit larger lower figures."""
+
+    if figure_size == "auto":
+        # Preserve the historical automatic TikZ width while still respecting
+        # the active line/minipage box and a finite vertical budget.
+        resized = rf"\resizebox{{4.5cm}}{{!}}{{{tikz_code}}}"
+        return (
+            rf"\adjustbox{{max width=\linewidth,max height={_DEFAULT_FIGURE_MAX_HEIGHT},"
+            rf"keepaspectratio}}{{{resized}}}"
+        )
+
+    width, height = _FIGURE_SIZE_LIMITS[figure_size]
+    if figure_align == "right":
+        width = "5.0cm"
+    bounded = (
+        rf"\adjustbox{{max width={width},max height={height},keepaspectratio}}"
+        rf"{{{tikz_code}}}"
+    )
+    return rf"\adjustbox{{max width=\linewidth}}{{{bounded}}}"
+
 
 def build_restricted_tex_environment(output_dir: str) -> dict[str, str]:
     """Build a minimal kpathsea policy for compiling untrusted question TeX."""
@@ -387,6 +445,13 @@ def build_latex_document(
     lines.append(r"\UseTblrLibrary{booktabs}")
     lines.append(r"\usepackage{tkz-euclide}")
     lines.append(r"\usepackage{lastpage}")
+    # Keep the first large detached figure away from the physical page edge
+    # without adding another TeX package to the portable runtime contract.
+    lines.append(
+        r"\newcommand{\mathbankneedspace}[1]{\par\begingroup\dimen0=#1\relax"
+        r"\ifdim\pagegoal<\maxdimen\ifdim\dimexpr\pagegoal-\pagetotal\relax<\dimen0"
+        r"\newpage\fi\fi\endgroup}"
+    )
     lines.append(r"\usepackage{caption}")
     lines.append(r"\usepackage{wrapfig}")
     lines.append(r"\usepackage{graphicx}")
@@ -540,7 +605,8 @@ def build_latex_document(
 
             fig_body = ""
             cleaned_raw = raw_content
-            fig_elements = []
+            figure_specs = []
+            img_matches = []
             if not preserve_inline_images:
                 if tikz_codes or r"\begin{tikzpicture}" in raw_content:
                     if not tikz_codes and r"\begin{tikzpicture}" in raw_content:
@@ -553,7 +619,7 @@ def build_latex_document(
                 for tikz_code in tikz_codes:
                     if r"\begin{tikzpicture}" not in tikz_code:
                         tikz_code = f"\\begin{{tikzpicture}}\n{tikz_code}\n\\end{{tikzpicture}}"
-                    fig_elements.append(f"\\resizebox{{4.5cm}}{{!}}{{{tikz_code}}}")
+                    figure_specs.append(("tikz", tikz_code))
 
                 img_matches = _MARKDOWN_IMAGE_RE.findall(raw_content)
                 if img_matches:
@@ -564,12 +630,8 @@ def build_latex_document(
                             continue
                         if not content_tikz_assets and tikz_codes and img_filename.startswith("tikz_"):
                             continue
-                        img_w = "3.8cm" if len(img_matches) > 1 or tikz_codes else "5.0cm"
-                        fig_elements.append(f"\\includegraphics[width={img_w}]{{{img_filename}}}")
+                        figure_specs.append(("image", img_filename))
                     cleaned_raw = re.sub(r'!\[.*?\]\([^)]+\)', '', cleaned_raw).strip()
-
-            if fig_elements:
-                fig_body = "\n\\vspace{2pt}\n".join(fig_elements)
 
             cleaned_content = clean_content_for_latex(
                 cleaned_raw,
@@ -581,11 +643,54 @@ def build_latex_document(
 
             default_fig_align = "bottom_right" if paper_type == "quiz" else "right"
             fig_align = q.get("figure_align")
-            if not fig_align or (paper_type == "quiz" and fig_align == "right" and not q.get("custom_figure_align")):
+            if not fig_align or (
+                paper_type == "quiz"
+                and fig_align == "right"
+                and not q.get("figure_align_custom")
+                and not q.get("custom_figure_align")
+            ):
                 fig_align = default_fig_align
             # 多张插图且原设定为右侧时，默认自动优化为下方居中 (center)
-            if len(fig_elements) > 1 and fig_align == "right":
+            if len(figure_specs) > 1 and fig_align == "right":
                 fig_align = "center"
+
+            figure_size = _normalize_figure_size(q.get("figure_size"))
+            figure_height_reserve_cm = _figure_height_limit_cm(figure_size)
+            fig_elements = []
+            compact_auto_images = len(img_matches) > 1 or bool(tikz_codes)
+            for figure_kind, figure_value in figure_specs:
+                if figure_kind == "tikz":
+                    fig_elements.append(
+                        _bounded_tikz(
+                            figure_value,
+                            figure_size=figure_size,
+                            figure_align=fig_align,
+                        )
+                    )
+                    continue
+
+                if figure_size == "auto":
+                    image_width = "3.8cm" if compact_auto_images else "5.0cm"
+                    image_height = _DEFAULT_FIGURE_MAX_HEIGHT
+                else:
+                    image_width, image_height = _FIGURE_SIZE_LIMITS[figure_size]
+                    if fig_align == "right":
+                        image_width = "5.0cm"
+                fig_elements.append(
+                    _bounded_includegraphics(
+                        figure_value,
+                        image_width,
+                        image_height,
+                    )
+                )
+
+            if fig_elements:
+                figure_separator = (
+                    "\n\\par\\vspace{2pt}\n"
+                    if len(fig_elements) > 1 and figure_size in {"medium", "large"}
+                    else "\n\\vspace{2pt}\n"
+                )
+                fig_body = figure_separator.join(fig_elements)
 
             question_id = q.get("id")
             if question_id is not None:
@@ -606,20 +711,42 @@ def build_latex_document(
                 except Exception:
                     space_val = 0.0
                 is_sol_spaced = (q_type == "detailed_answer" and not include_answers and space_val > 0)
+                figure_solution_box_height = max(
+                    space_val,
+                    figure_height_reserve_cm,
+                )
+                figure_in_solution_box = bool(
+                    is_sol_spaced and fig_align in {"center", "bottom_right"}
+                    and len(fig_elements) == 1
+                )
 
-                if fig_align == "center":
+                if fig_align in {"center", "bottom_right"}:
                     lines.append(stem_text)
-                    lines.append(r"\begin{center}")
-                    lines.append(r"  \vspace*{-0.4em}")
-                    lines.append(f"  {fig_body}")
-                    lines.append(r"\end{center}")
-                elif fig_align == "bottom_right":
-                    lines.append(stem_text)
-                    lines.append(r"\begin{flushright}")
-                    lines.append(r"  \vspace*{-0.4em}")
-                    lines.append(f"  {fig_body}")
-                    lines.append(r"\end{flushright}")
+                    if figure_in_solution_box:
+                        lines.append(
+                            rf"\par\noindent\begin{{minipage}}[t][{figure_solution_box_height:.1f}cm][t]{{\linewidth}}"
+                        )
+                    lower_environment = "center" if fig_align == "center" else "flushright"
+                    split_large_figures = (
+                        len(fig_elements) > 1 and figure_size in {"medium", "large"}
+                    )
+                    if split_large_figures:
+                        lines.append(
+                            rf"\mathbankneedspace{{{figure_height_reserve_cm + 0.5:.1f}cm}}"
+                        )
+                        for figure_element in fig_elements:
+                            lines.append(rf"\begin{{{lower_environment}}}")
+                            lines.append(f"  {figure_element}")
+                            lines.append(rf"\end{{{lower_environment}}}")
+                    else:
+                        lines.append(rf"\begin{{{lower_environment}}}")
+                        lines.append(r"  \vspace*{-0.4em}")
+                        lines.append(f"  {fig_body}")
+                        lines.append(rf"\end{{{lower_environment}}}")
+                    if figure_in_solution_box:
+                        lines.append(r"\end{minipage}")
                 else:  # default "right"
+                    figure_in_solution_box = False
                     lines.append(r"\noindent\begin{minipage}[t]{\dimexpr\linewidth-5.8cm\relax}")
                     lines.append(r"  \setlength{\parindent}{2em}")
                     lines.append(r"  \hangindent=0pt")
@@ -649,10 +776,7 @@ def build_latex_document(
                 except Exception:
                     space_val = 0.0
                 if space_val > 0:
-                    if fig_body and fig_align in ["bottom_right", "center"]:
-                        net_space = max(space_val - 3.2, 0.5)
-                        lines.append(f"\\vspace*{{{net_space:.1f}cm}}")
-                    else:
+                    if not (fig_body and figure_in_solution_box):
                         lines.append(f"\\vspace*{{{space_val:.1f}cm}}")
 
             lines.append(f"\\end{{{env_name}}}")

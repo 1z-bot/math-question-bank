@@ -355,6 +355,298 @@ if (!simpleRendered.includes('data-figure-align-qid="43"')) {
     assert result.returncode == 0, result.stderr
 
 
+def test_paper_figure_size_presets_and_auto_wide_resolution_are_executable():
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+    helper_start = paper_source.index(
+        "function shouldPreserveInlinePaperImages(raw)"
+    )
+    helper_end = paper_source.index("// Init on DOMContentLoaded", helper_start)
+    helper_source = paper_source[helper_start:helper_end]
+
+    node = shutil.which("node")
+    assert node, "Node.js is required for the frontend executable regression"
+    script = helper_source + r'''
+global.window = {
+  parseMarkdownWithMath: value => value,
+  MathBankSafe: {
+    safeImageUrl: value => value,
+    escapeAttribute: value => value,
+    sanitizeRichHtml: value => value
+  }
+};
+
+const single = String.raw`宽幅合成图
+
+![](/static/uploads/wide.png)`;
+const autoRendered = formatQuestionContentHtml(single, 51, 'bottom_right', false, true, 'auto');
+if (!autoRendered.includes('max-width: min(100%, 200px)') || !autoRendered.includes('max-height: 170px')) {
+  throw new Error(`auto did not start from the standard single-image size: ${autoRendered}`);
+}
+const wideImage = {
+  dataset: { figureSize: 'auto', figureAlign: 'bottom_right', figureImageCount: '1' },
+  naturalWidth: 2400,
+  naturalHeight: 800,
+  style: {}
+};
+applyAutoFigureImageSize(wideImage);
+if (wideImage.style.maxWidth !== 'min(100%, 420px)' || wideImage.style.maxHeight !== '300px') {
+  throw new Error(`wide auto image did not expand to 420x300: ${JSON.stringify(wideImage.style)}`);
+}
+const autoMetrics = getDetachedFigureMetrics(single, 'bottom_right', 'auto');
+if (autoMetrics.maxWidth !== 420 || autoMetrics.maxHeight !== 300 || autoMetrics.blockHeight < 300) {
+  throw new Error(`auto pagination did not reserve the wide ceiling: ${JSON.stringify(autoMetrics)}`);
+}
+
+const multiple = String.raw`多图
+
+![](/static/uploads/one.png)
+
+![](/static/uploads/two.png)`;
+const multiRendered = formatQuestionContentHtml(multiple, 52, 'center', false, true, 'auto');
+const legacyWidths = multiRendered.match(/max-width: min\(100%, 150px\)/g) || [];
+const legacyHeights = multiRendered.match(/max-height: 140px/g) || [];
+if (legacyWidths.length !== 2 || legacyHeights.length !== 2) {
+  throw new Error(`auto multi-image compatibility changed: ${multiRendered}`);
+}
+
+const rightLarge = formatQuestionContentHtml(single, 53, 'right', false, true, 'large');
+if (!rightLarge.includes('max-width: min(100%, 155px)') ||
+    !rightLarge.includes('max-height: 135px') ||
+    !rightLarge.includes('width: 160px; max-width: 160px;')) {
+  throw new Error(`right layout escaped its 160px safety column: ${rightLarge}`);
+}
+'''
+    result = subprocess.run(
+        [node, "-e", script],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_paper_and_editor_figure_layout_controls_keep_their_write_boundaries():
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+    ocr_source = _read(STATIC_JS_DIR / "ocr.js")
+    import_source = _read(STATIC_JS_DIR / "import.js")
+
+    paper_handler_start = paper_source.index("window.setFigureLayout = function")
+    paper_handler_end = paper_source.index(
+        "window.showFigureAlignPopover = function", paper_handler_start
+    )
+    paper_handler = paper_source[paper_handler_start:paper_handler_end]
+    for marker in (
+        "/api/questions/${qid}/figure_layout",
+        "formData.append('figure_align', nextAlign)",
+        "formData.append('figure_size', nextSize)",
+        "window.setFigureSize",
+    ):
+        assert marker in paper_handler
+    assert "const FIGURE_SIZE_VALUES = ['auto', 'small', 'medium', 'large']" in paper_source
+    assert "if (q.figure_align_custom && ['right', 'center', 'bottom_right'].includes(q.figure_align))" in paper_source
+    assert "FIGURE_SIZE_VALUES.map(size =>" in paper_source
+    assert "window.setFigureSize(${qid}, '${size}')" in paper_source
+    assert "window.waitForFigureLayoutWrite = async function" in paper_source
+    assert "window.isQuestionSaveInFlight()" in paper_handler
+    assert "await window.waitForFigureLayoutWrite(pendingLayoutQuestionId)" in import_source
+
+    editor_handler_start = ocr_source.index("window.setEditorFigureLayout = function")
+    editor_handler_end = ocr_source.index(
+        "window.showEditorFigureLayoutPopover = function", editor_handler_start
+    )
+    editor_handler = ocr_source[editor_handler_start:editor_handler_end]
+    assert "FigureLayoutState.setAlign" in editor_handler
+    assert "FigureLayoutState.setSize" in editor_handler
+    assert "dispatchEvent(new Event('input'))" in editor_handler
+    assert "fetch(" not in editor_handler
+
+    assert "let layoutChipRendered = false" in ocr_source
+    assert "const showLayoutChip = allowLayoutControls && !layoutChipRendered" in ocr_source
+    assert ocr_source.count("showLayoutChip ?") == 1
+    assert "window.showEditorFigureLayoutPopover(event)" in ocr_source
+    assert "function hasDetachedEditorFigureGroup(sourceText)" in ocr_source
+    assert "const allowLayoutControls = hasDetachedEditorFigureGroup" in ocr_source
+    assert "正文锚定插图保持原位置" in ocr_source
+    assert "? `<button type=\"button\" onclick=\"window.showEditorFigureLayoutPopover(event)\"" in ocr_source
+    assert ": `<span class=\"flex min-w-0 items-center gap-1.5\"" in ocr_source
+
+    editor_popover_start = ocr_source.index("window.showEditorFigureLayoutPopover")
+    editor_popover_end = ocr_source.index(
+        "function renderIllustrationBadges()", editor_popover_start
+    )
+    editor_popover = ocr_source[editor_popover_start:editor_popover_end]
+    assert "['auto', 'small', 'medium', 'large'].map(size =>" in editor_popover
+    assert "window.setEditorFigureLayout('size', '${size}')" in editor_popover
+
+
+def test_paper_figure_layout_writes_are_serial_and_reconcile_live_objects():
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+    handler_start = paper_source.index("const figureLayoutWrites = Object.create(null)")
+    handler_end = paper_source.index(
+        "window.showFigureAlignPopover = function", handler_start
+    )
+    handler_source = paper_source[handler_start:handler_end]
+
+    node = shutil.which("node")
+    assert node, "Node.js is required for the frontend executable regression"
+    script = r'''
+function normalizeFigureSize(value) {
+  return ['auto', 'small', 'medium', 'large'].includes(value) ? value : 'auto';
+}
+function getQuestionFigSize(question) {
+  return normalizeFigureSize(question && question.figure_size);
+}
+function getQuestionFigAlign(question) {
+  const value = String(question && question.figure_align || 'right');
+  return ['right', 'center', 'bottom_right'].includes(value) ? value : 'right';
+}
+const FIGURE_SIZE_LABELS = { auto: '自动', small: '小', medium: '中', large: '大' };
+
+const editorLayout = {
+  figure_align: 'right',
+  figure_size: 'auto',
+  figure_align_custom: false
+};
+const baselineCommits = [];
+global.window = {
+  PaperStore: {
+    questionsMap: {
+      1: { id: 1, seq_num: 1, figure_align: 'right', custom_figure_align: 'right', figure_size: 'auto' },
+      3: { id: 3, seq_num: 3, figure_align: 'right', custom_figure_align: 'right', figure_size: 'auto' },
+      4: { id: 4, seq_num: 4, figure_align: 'right', custom_figure_align: 'right', figure_size: 'auto' }
+    }
+  },
+  EditorState: { questionId: 1 },
+  FigureLayoutState: {
+    setAlign(value) { editorLayout.figure_align = value; },
+    setSize(value) { editorLayout.figure_size = value; },
+    setCustomAlign(value) { editorLayout.figure_align_custom = Boolean(value); },
+    snapshot() { return { ...editorLayout }; }
+  },
+  commitEditorFigureLayoutBaseline(qid, align, size, customAlign) {
+    baselineCommits.push({ qid, align, size, customAlign });
+  },
+  renderPart3QuestionStream() {},
+  renderPaperCanvas() {},
+  showToast() {}
+};
+global.document = { getElementById() { return null; } };
+global.FormData = class {
+  constructor() { this.entries = []; }
+  append(key, value) { this.entries.push([key, value]); }
+};
+global.console = { ...console, error() {} };
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+function response(ok, body, status) {
+  return { ok, status: status || (ok ? 200 : 500), json: async () => body };
+}
+const fetchCalls = [];
+global.fetch = (url, options) => {
+  const pending = deferred();
+  fetchCalls.push({ url, options, pending });
+  return pending.promise;
+};
+const tick = () => new Promise(resolve => setImmediate(resolve));
+''' + handler_source + r'''
+
+(async () => {
+  window.setFigureLayout(1, 'center', 'medium');
+  window.setFigureLayout(1, 'bottom_right', 'large');
+  await tick();
+  if (fetchCalls.length !== 1) {
+    throw new Error(`second layout write was not queued: ${fetchCalls.length} fetches started`);
+  }
+
+  // The user moved to another editor record while the first request was in flight.
+  window.EditorState.questionId = 2;
+  editorLayout.figure_align = 'right';
+  editorLayout.figure_size = 'small';
+
+  fetchCalls[0].pending.resolve(response(true, {
+    status: 'success', figure_align: 'center', figure_size: 'medium'
+  }));
+  await tick();
+  await tick();
+  if (fetchCalls.length !== 2) {
+    throw new Error(`second layout write did not start after first success: ${fetchCalls.length}`);
+  }
+
+  fetchCalls[1].pending.resolve(response(false, { detail: 'write failed' }, 500));
+  await tick();
+  await tick();
+  const firstQuestion = window.PaperStore.questionsMap[1];
+  if (firstQuestion.figure_align !== 'center' || firstQuestion.figure_size !== 'medium') {
+    throw new Error(`second failure did not roll back to first confirmation: ${JSON.stringify(firstQuestion)}`);
+  }
+  if (editorLayout.figure_align !== 'right' || editorLayout.figure_size !== 'small') {
+    throw new Error(`late response changed the newly active editor: ${JSON.stringify(editorLayout)}`);
+  }
+  if (baselineCommits.length !== 0) {
+    throw new Error(`late response committed a baseline for an inactive editor: ${JSON.stringify(baselineCommits)}`);
+  }
+
+  // A bank refresh may replace the question object while the request is pending.
+  window.setFigureLayout(3, 'center', 'medium');
+  await tick();
+  if (fetchCalls.length !== 3) {
+    throw new Error(`replacement scenario request did not start: ${fetchCalls.length}`);
+  }
+  const replacement = {
+    id: 3, seq_num: 3, figure_align: 'right', custom_figure_align: 'right', figure_size: 'auto'
+  };
+  window.PaperStore.questionsMap[3] = replacement;
+  fetchCalls[2].pending.resolve(response(true, {
+    status: 'success', figure_align: 'bottom_right', figure_size: 'large'
+  }));
+  await tick();
+  await tick();
+  if (replacement.figure_align !== 'bottom_right' || replacement.figure_size !== 'large') {
+    throw new Error(`confirmed layout did not update replacement object: ${JSON.stringify(replacement)}`);
+  }
+
+  // A newer unsaved editor-only layout must survive an older paper response,
+  // while the server-confirmed layout still advances only the saved baseline.
+  window.EditorState.questionId = 4;
+  editorLayout.figure_align = 'right';
+  editorLayout.figure_size = 'auto';
+  window.setFigureLayout(4, 'center', 'medium');
+  await tick();
+  editorLayout.figure_align = 'bottom_right';
+  editorLayout.figure_size = 'large';
+  fetchCalls[3].pending.resolve(response(true, {
+    status: 'success', figure_align: 'center', figure_size: 'medium'
+  }));
+  await tick();
+  await tick();
+  if (editorLayout.figure_align !== 'bottom_right' || editorLayout.figure_size !== 'large') {
+    throw new Error(`paper response overwrote newer editor-only layout: ${JSON.stringify(editorLayout)}`);
+  }
+  const lastBaseline = baselineCommits[baselineCommits.length - 1];
+  if (!lastBaseline || lastBaseline.qid !== 4 || lastBaseline.align !== 'center' || lastBaseline.size !== 'medium') {
+    throw new Error(`confirmed baseline was not advanced independently: ${JSON.stringify(baselineCommits)}`);
+  }
+})().catch(error => {
+  process.stderr.write(String(error.stack || error));
+  process.exitCode = 1;
+});
+'''
+    result = subprocess.run(
+        [node, "-e", script],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_solution_space_controls_stay_at_the_resizable_zone_top():
     paper_source = _read(STATIC_JS_DIR / "paper.js")
     block_start = paper_source.index("solutionBlankHtml = `")

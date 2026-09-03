@@ -40,9 +40,11 @@
 - **题干录入**：支持多行纯文本与 LaTeX 代码混合输入，界面配备实时 KaTeX 渲染预览区。
 - **插图管理**：提供图片上传与 TikZ 绘图代码输入。图片保存在本地文件系统（`static/uploads/`），数据库存储相对路径。
 - **插图排版位置联动与多图复合渲染**：
-  - **多模式与多插图支持**：插图在后端存储 `figure_align` 属性（支持 `right` 题干右侧、`center` 下方居中、`bottom_right` 下方居右）。
+  - **多模式与多插图支持**：插图在后端存储 `figure_align` 属性（支持 `right` 题干右侧、`center` 下方居中、`bottom_right` 下方居右）、`figure_size` 属性（支持 `auto` 自动、`small` 小、`medium` 中、`large` 大）与布尔属性 `figure_align_custom`（是否由用户明确选择位置）；旧题经 schema v9 备份优先迁移后尺寸默认为 `auto`、位置自定义默认为 `false`。
   - **插图锚点与预览同步**：题末单图或连续图片簇继续由 `figure_align` 控制右侧、居中或居右排版；图片后仍有正文、表格闭合结构、标题或说明时，前端组卷预览与 LaTeX/PDF 导出必须保留全部 Markdown 图片的原始正文锚点。`tabular`、`tabular*`、`tabularx`、`longtable`、`tblr`、`longtblr`、`talltblr` 单元格内图片不得抽取到题末，多图复杂题的网页与 PDF 顺序必须和题库详情一致。
-  - **交互弹窗切换**：在 A4 试卷预览框中点击或右击题末可分离插图可弹出气泡菜单切换排版位置，并通过 `POST /api/questions/{qid}/figure_align` 持久化；正文或表格内锚定图片不显示整题插图位置控件，避免移动后破坏语义结构。
+  - **交互弹窗切换**：在 A4 试卷预览框中点击或右击题末可分离插图可弹出气泡菜单切换排版位置与尺寸，并通过 `POST /api/questions/{qid}/figure_layout` 同时校验、持久化 `figure_align` / `figure_size`；新旧两个布局端点成功后都必须将 `figure_align_custom` 设为 `true`。旧 `POST /api/questions/{qid}/figure_align` 仅作兼容入口且不得改写已存尺寸。小练模式只能在 `figure_align_custom` 与历史临时字段 `custom_figure_align` 均不为真时，才将旧题的 `right` 解释为默认 `bottom_right`。正文或表格内锚定图片不显示整题插图控件，避免移动或缩放后破坏语义结构。
+  - **题库编辑器尺寸入口**：普通插图的文件徽标或文件名可点击打开与 A4 预览一致的轻量位置＋尺寸选择，默认尺寸为 `auto`，不新增常驻面板；未保存题目的选择只随正常保存写库。
+  - **尺寸安全与导出一致性**：网页、LaTeX/PDF 与 Word 对 `small` / `medium` / `large` 使用对应的有界等比例尺寸；题干右侧始终受窄栏上限保护，下方居中或居右仍不得超过当前正文行宽/页面可用宽度。`auto` 保留普通图兼容尺寸，但网页可将单张宽幅题末图自适应放大；A4 分页与解答留白必须按自动宽图上限预留，防止页底裁切。
   - **解答题留白调控**：解答题支持留白高度调控。若插图设为 `bottom_right` 或 `center`，插图包含在留白空间顶侧，避免垂直叠加过长。切换为 `exam_19`（高考卷）时自动恢复紧凑布局。
 - **选择题与填空题环境规范**：
   - 选择题选项统一格式化为 LaTeX `choices` 环境（`\begin{choices}` 和 `\item`），剥离原本的 A., B., C., D. 标号前缀。

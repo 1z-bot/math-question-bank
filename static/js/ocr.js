@@ -435,20 +435,219 @@
             textarea.setSelectionRange(newCursorPos, newCursorPos);
         }
 
+        const EDITOR_FIGURE_SIZE_LABELS = {
+            auto: '自动',
+            small: '小',
+            medium: '中',
+            large: '大'
+        };
+        const EDITOR_FIGURE_ALIGN_LABELS = {
+            right: '题干右侧',
+            center: '下方居中',
+            bottom_right: '下方居右'
+        };
+
+        function currentEditorFigureLayout() {
+            const snapshot = window.FigureLayoutState && typeof window.FigureLayoutState.snapshot === 'function'
+                ? window.FigureLayoutState.snapshot()
+                : {};
+            const align = ['right', 'center', 'bottom_right'].includes(snapshot.figure_align)
+                ? snapshot.figure_align
+                : 'right';
+            const size = ['auto', 'small', 'medium', 'large'].includes(snapshot.figure_size)
+                ? snapshot.figure_size
+                : 'auto';
+            return { align, size };
+        }
+
+        function editorFigureDimensions(size, align, count) {
+            if (align === 'right') {
+                return count > 1
+                    ? { maxWidth: 125, maxHeight: 115 }
+                    : { maxWidth: 155, maxHeight: 135 };
+            }
+            if (size === 'medium') return { maxWidth: 320, maxHeight: 240 };
+            if (size === 'large') return { maxWidth: 420, maxHeight: 300 };
+            if (size === 'auto' && count > 1) return { maxWidth: 150, maxHeight: 140 };
+            return { maxWidth: 200, maxHeight: 170 };
+        }
+
+        function hasDetachedEditorFigureGroup(sourceText) {
+            const source = String(sourceText || '');
+            const imagePattern = /!\[.*?\]\(([^)]+)\)/g;
+            const matches = [...source.matchAll(imagePattern)];
+            if (matches.length === 0) return false;
+            const firstImageIndex = matches[0].index || 0;
+            return source.slice(firstImageIndex).replace(imagePattern, '').trim().length === 0;
+        }
+
+        function applyEditorFigureLayoutPreview(targetContainer = null, sourceText = null) {
+            const textarea = document.getElementById('editContent');
+            if (!textarea && sourceText === null) return;
+            const source = String(sourceText === null ? (textarea && textarea.value || '') : sourceText);
+            const imagePattern = /!\[.*?\]\(([^)]+)\)/g;
+            const matches = [...source.matchAll(imagePattern)];
+            if (!hasDetachedEditorFigureGroup(source)) return;
+
+            // Keep table/interleaved images at their authored anchors, matching
+            // the paper preview's existing semantic-position safeguard.
+            const layout = currentEditorFigureLayout();
+            const count = Array.from(new Set(matches.map(match => match[1]))).length;
+            const effectiveAlign = count > 1 && layout.align === 'right' ? 'center' : layout.align;
+            const baseDimensions = editorFigureDimensions(layout.size, effectiveAlign, count);
+
+            const containers = targetContainer
+                ? [targetContainer]
+                : ['contentPreview', 'paperContent'].map(containerId => document.getElementById(containerId));
+            containers.forEach(container => {
+                if (!container) return;
+                const images = Array.from(container.querySelectorAll('img')).slice(-count);
+                if (effectiveAlign === 'right' && images.length === 1) {
+                    const rightWrapper = images[0].parentElement;
+                    if (rightWrapper) {
+                        rightWrapper.style.float = 'right';
+                        rightWrapper.style.margin = '0 0 0.5rem 0.75rem';
+                        container.insertBefore(rightWrapper, container.firstChild);
+                        container.style.display = 'flow-root';
+                    }
+                } else {
+                    images.forEach(image => {
+                        if (image.parentElement) container.appendChild(image.parentElement);
+                    });
+                    container.style.display = '';
+                }
+                images.forEach(image => {
+                    const wrapper = image.parentElement;
+                    if (wrapper) {
+                        wrapper.style.textAlign = effectiveAlign === 'center' ? 'center' : 'right';
+                        wrapper.style.maxWidth = '100%';
+                        if (effectiveAlign !== 'right') {
+                            wrapper.style.float = 'none';
+                            wrapper.style.marginLeft = '0';
+                        }
+                    }
+                    image.style.width = 'auto';
+                    image.style.height = 'auto';
+                    image.style.maxWidth = `min(100%, ${baseDimensions.maxWidth}px)`;
+                    image.style.maxHeight = `${baseDimensions.maxHeight}px`;
+
+                    if (layout.size !== 'auto' || effectiveAlign === 'right' || count !== 1) return;
+                    const resolveAuto = () => {
+                        if (!(image.naturalWidth > 0) || !(image.naturalHeight > 0)) return;
+                        const wide = image.naturalWidth / image.naturalHeight >= 1.6;
+                        image.style.maxWidth = `min(100%, ${wide ? 420 : 200}px)`;
+                        image.style.maxHeight = `${wide ? 300 : 170}px`;
+                    };
+                    if (image.complete) resolveAuto();
+                    else image.addEventListener('load', resolveAuto, { once: true });
+                });
+            });
+        }
+        window.applyEditorFigureLayoutPreview = applyEditorFigureLayoutPreview;
+
+        window.setEditorFigureLayout = function(kind, value) {
+            if (!window.FigureLayoutState) return;
+            if (kind === 'align') {
+                window.FigureLayoutState.setAlign(value);
+                window.FigureLayoutState.setCustomAlign(true);
+            }
+            if (kind === 'size') window.FigureLayoutState.setSize(value);
+
+            const popover = document.getElementById('editorFigureLayoutPopover');
+            if (popover) popover.remove();
+            if (typeof window.renderIllustrationBadges === 'function') {
+                window.renderIllustrationBadges();
+            }
+            applyEditorFigureLayoutPreview();
+
+            const textarea = document.getElementById('editContent');
+            if (textarea) textarea.dispatchEvent(new Event('input'));
+            setTimeout(applyEditorFigureLayoutPreview, 320);
+        };
+
+        window.showEditorFigureLayoutPopover = function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            const existing = document.getElementById('editorFigureLayoutPopover');
+            if (existing) existing.remove();
+
+            const layout = currentEditorFigureLayout();
+            const popover = document.createElement('div');
+            popover.id = 'editorFigureLayoutPopover';
+            popover.className = 'fixed z-50 w-56 rounded-2xl border border-slate-200 bg-white/95 p-2 font-sans text-xs text-slate-700 shadow-xl backdrop-blur-md dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
+            let left = event.clientX + 5;
+            let top = event.clientY + 5;
+            if (left + 224 > window.innerWidth) left = window.innerWidth - 234;
+            if (top + 205 > window.innerHeight) top = window.innerHeight - 215;
+            popover.style.left = `${Math.max(8, left)}px`;
+            popover.style.top = `${Math.max(8, top)}px`;
+
+            const alignButtons = ['right', 'center', 'bottom_right'].map(align => `
+                <button type="button" onclick="window.setEditorFigureLayout('align', '${align}')"
+                    class="min-w-0 flex-1 rounded-md border px-1 py-1 text-[10px] ${layout.align === align ? 'border-brand-200 bg-brand-50 font-bold text-brand-700' : 'border-slate-200 text-slate-500 hover:border-brand-200 hover:text-brand-600 dark:border-slate-600 dark:text-slate-300'}">${EDITOR_FIGURE_ALIGN_LABELS[align].replace('题干', '').replace('下方', '')}</button>
+            `).join('');
+            const sizeButtons = ['auto', 'small', 'medium', 'large'].map(size => `
+                <button type="button" onclick="window.setEditorFigureLayout('size', '${size}')"
+                    class="min-w-0 flex-1 rounded-md border px-1 py-1 text-[10px] ${layout.size === size ? 'border-brand-200 bg-brand-50 font-bold text-brand-700' : 'border-slate-200 text-slate-500 hover:border-brand-200 hover:text-brand-600 dark:border-slate-600 dark:text-slate-300'}">${EDITOR_FIGURE_SIZE_LABELS[size]}</button>
+            `).join('');
+            popover.innerHTML = `
+                <div class="mb-2 flex items-center justify-between border-b border-slate-100 px-1 pb-1.5 font-bold dark:border-slate-700">
+                    <span><i class="fa-solid fa-sliders mr-1 text-brand-500"></i>插图排版</span>
+                    <button type="button" onclick="document.getElementById('editorFigureLayoutPopover').remove()" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div class="mb-2">
+                    <div class="mb-1 text-[10px] text-slate-400">位置</div>
+                    <div class="flex gap-1">${alignButtons}</div>
+                </div>
+                <div>
+                    <div class="mb-1 flex justify-between text-[10px] text-slate-400"><span>尺寸</span><span>右侧模式自动限宽</span></div>
+                    <div class="flex gap-1">${sizeButtons}</div>
+                </div>
+                <div class="mt-2 text-[9px] text-slate-400">随题目保存后写入题库</div>
+            `;
+            document.body.appendChild(popover);
+
+            const closeHandler = function(closeEvent) {
+                if (!popover.contains(closeEvent.target)) {
+                    popover.remove();
+                    document.removeEventListener('click', closeHandler);
+                }
+            };
+            setTimeout(() => document.addEventListener('click', closeHandler), 0);
+        };
+
         function renderIllustrationBadges() {
             const listContainer = document.getElementById('illustrationsList');
             if (!listContainer) return;
             listContainer.innerHTML = '';
 
             const hiddenReferencePaths = new Set(TikzState.referencePaths());
+            let layoutChipRendered = false;
+            const textarea = document.getElementById('editContent');
+            const allowLayoutControls = hasDetachedEditorFigureGroup(textarea ? textarea.value : '');
 
             uploadedImages.forEach((path, idx) => {
                 if (hiddenReferencePaths.has(path)) return;
                 const filename = path.split('/').pop();
+                const safeFilename = window.MathBankSafe.escapeText(filename);
+                const safeFilenameAttr = window.MathBankSafe.escapeAttribute(filename);
+                const layout = currentEditorFigureLayout();
+                const layoutLabel = `${EDITOR_FIGURE_ALIGN_LABELS[layout.align]} · ${EDITOR_FIGURE_SIZE_LABELS[layout.size]}`;
+                const showLayoutChip = allowLayoutControls && !layoutChipRendered;
+                if (showLayoutChip) layoutChipRendered = true;
+                const fileDisplay = allowLayoutControls
+                    ? `<button type="button" onclick="window.showEditorFigureLayoutPopover(event)" class="flex min-w-0 items-center gap-1.5 text-left hover:text-brand-600" title="点击调整${window.MathBankSafe.escapeAttribute(layoutLabel)}">
+                            <i class="fa-solid fa-file-image shrink-0 text-brand-500"></i>
+                            <span class="truncate max-w-[100px]" title="${safeFilenameAttr}">${safeFilename}</span>
+                            ${showLayoutChip ? `<span class="shrink-0 rounded bg-brand-50 px-1 py-0.5 text-[9px] text-brand-600">${window.MathBankSafe.escapeText(EDITOR_FIGURE_SIZE_LABELS[layout.size])}</span>` : ''}
+                       </button>`
+                    : `<span class="flex min-w-0 items-center gap-1.5" title="正文锚定插图保持原位置">
+                            <i class="fa-solid fa-file-image shrink-0 text-brand-500"></i>
+                            <span class="truncate max-w-[100px]" title="${safeFilenameAttr}">${safeFilename}</span>
+                       </span>`;
                 listContainer.innerHTML += `
                     <div class="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg border bg-white shadow-sm text-xs text-slate-600">
-                        <i class="fa-solid fa-file-image text-brand-500"></i>
-                        <span class="truncate max-w-[100px]" title="${filename}">${filename}</span>
+                        ${fileDisplay}
                         <button type="button" onclick="deleteUploadedIllustration(${idx})" class="text-slate-400 hover:text-red-500 transition-all font-semibold pl-1">
                             <i class="fa-solid fa-xmark"></i>
                         </button>

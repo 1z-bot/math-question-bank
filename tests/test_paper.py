@@ -318,7 +318,11 @@ def test_latex_export_renders_every_editable_content_tikz_asset_once():
     assert tex.count(second_code) == 1
     assert "tikz_first.png" not in tex
     assert "tikz_second.png" not in tex
-    assert r"\includegraphics[width=3.8cm]{photo.png}" in tex
+    assert tex.count(r"\resizebox{4.5cm}{!}{") == 2
+    assert (
+        r"\includegraphics[max width=3.8cm,max height=6.0cm,keepaspectratio]{photo.png}"
+        in tex
+    )
 
 
 def test_latex_export_preserves_complex_inline_and_tabular_image_positions():
@@ -384,7 +388,183 @@ def test_latex_export_keeps_single_trailing_figure_alignment_layout():
     tex = build_latex_document("普通右图题", "", "exam", questions)
 
     assert r"\begin{minipage}[t]{\dimexpr\linewidth-5.8cm\relax}" in tex
-    assert r"\includegraphics[width=5.0cm]{graph.png}" in tex
+    assert (
+        r"\includegraphics[max width=5.0cm,max height=6.0cm,keepaspectratio]{graph.png}"
+        in tex
+    )
+    assert r"\adjustbox{max width=\linewidth}{\includegraphics" in tex
+
+
+def test_quiz_legacy_right_default_respects_persisted_custom_alignment():
+    from mathbank.paper_helper import build_latex_document
+
+    base_question = {
+        "id": 104,
+        "question_type": "detailed_answer",
+        "content": "小练插图题\n\n![](/static/uploads/graph.png)",
+        "figure_align": "right",
+    }
+    legacy_tex = build_latex_document(
+        "旧题小练", "", "quiz", [{"question": base_question, "score": 5}]
+    )
+    persisted_custom_tex = build_latex_document(
+        "新题小练",
+        "",
+        "quiz",
+        [{
+            "question": {**base_question, "figure_align_custom": True},
+            "score": 5,
+        }],
+    )
+    transient_custom_tex = build_latex_document(
+        "临时布局小练",
+        "",
+        "quiz",
+        [{
+            "question": {**base_question, "custom_figure_align": "right"},
+            "score": 5,
+        }],
+    )
+
+    assert r"\begin{flushright}" in legacy_tex
+    assert r"\begin{minipage}[t]{\dimexpr\linewidth-5.8cm\relax}" not in legacy_tex
+    for tex in (persisted_custom_tex, transient_custom_tex):
+        assert r"\begin{minipage}[t]{\dimexpr\linewidth-5.8cm\relax}" in tex
+        assert r"\begin{flushright}" not in tex
+
+
+@pytest.mark.parametrize(
+    ("figure_align", "figure_size", "expected_width", "expected_height"),
+    [
+        ("center", "small", "5.0cm", "4.0cm"),
+        ("center", "medium", "8.0cm", "6.0cm"),
+        ("bottom_right", "large", "11.0cm", "8.0cm"),
+        ("right", "large", "5.0cm", "8.0cm"),
+    ],
+)
+def test_latex_export_maps_explicit_figure_size_by_alignment(
+    figure_align,
+    figure_size,
+    expected_width,
+    expected_height,
+):
+    from mathbank.paper_helper import build_latex_document
+
+    questions = [{
+        "question": {
+            "id": 105,
+            "question_type": "detailed_answer",
+            "content": "带图题\n\n![](/static/uploads/graph.png)",
+            "figure_align": figure_align,
+            "figure_size": figure_size,
+        },
+        "score": 12,
+        "solution_space": "0.0",
+    }]
+
+    tex = build_latex_document("插图尺寸题", "", "exam", questions)
+
+    assert (
+        rf"\includegraphics[max width={expected_width},max height={expected_height},"
+        rf"keepaspectratio]{{graph.png}}"
+        in tex
+    )
+    assert r"\adjustbox{max width=\linewidth}{\includegraphics" in tex
+
+
+@pytest.mark.parametrize(
+    ("figure_align", "figure_size", "expected_width", "expected_height"),
+    [
+        ("center", "medium", "8.0cm", "6.0cm"),
+        ("bottom_right", "large", "11.0cm", "8.0cm"),
+        ("right", "large", "5.0cm", "8.0cm"),
+    ],
+)
+def test_latex_export_maps_explicit_tikz_size_and_caps_right_layout(
+    figure_align,
+    figure_size,
+    expected_width,
+    expected_height,
+):
+    from mathbank.paper_helper import build_latex_document
+
+    tikz_code = r"\begin{tikzpicture}\draw (0,0)--(8,0);\end{tikzpicture}"
+    questions = [{
+        "question": {
+            "id": 106,
+            "question_type": "detailed_answer",
+            "content": "TikZ 尺寸题\n\n![](/static/uploads/tikz_graph.png)",
+            "content_tikz_assets": [{
+                "id": "content_graph",
+                "image_path": "/static/uploads/tikz_graph.png",
+                "tikz_code": tikz_code,
+            }],
+            "figure_align": figure_align,
+            "figure_size": figure_size,
+        },
+        "score": 12,
+        "solution_space": "0.0",
+    }]
+
+    tex = build_latex_document("TikZ 插图尺寸题", "", "exam", questions)
+
+    assert (
+        rf"\adjustbox{{max width={expected_width},max height={expected_height},"
+        rf"keepaspectratio}}{{{tikz_code}}}"
+        in tex
+    )
+    assert r"\resizebox{4.5cm}{!}{" not in tex
+
+
+def test_large_lower_figure_is_contained_in_a_safe_solution_space_box():
+    from mathbank.paper_helper import build_latex_document
+
+    questions = [{
+        "question": {
+            "id": 107,
+            "question_type": "detailed_answer",
+            "content": "大幅插图题\n\n![](/static/uploads/tall.png)",
+            "figure_align": "bottom_right",
+            "figure_size": "large",
+        },
+        "score": 12,
+        "solution_space": "7.0",
+    }]
+
+    tex = build_latex_document("大图留白测试", "", "exam", questions)
+
+    assert r"max height=8.0cm" in tex
+    assert r"\par\noindent\begin{minipage}[t][8.0cm][t]{\linewidth}" in tex
+    assert r"\vspace*{3.8cm}" not in tex
+    assert r"\vspace*{7.0cm}" not in tex
+
+
+def test_multiple_large_lower_figures_remain_page_breakable():
+    from mathbank.paper_helper import build_latex_document
+
+    images = "\n\n".join(
+        f"![图{index}](/static/uploads/large-{index}.png)"
+        for index in range(1, 5)
+    )
+    questions = [{
+        "question": {
+            "id": 108,
+            "question_type": "detailed_answer",
+            "content": f"多幅大图题\n\n{images}",
+            "figure_align": "bottom_right",
+            "figure_size": "large",
+        },
+        "score": 12,
+        "solution_space": "7.0",
+    }]
+
+    tex = build_latex_document("多幅大图分页测试", "", "exam", questions)
+
+    assert r"\begin{minipage}[t][32.0cm][t]{\linewidth}" not in tex
+    assert tex.count(r"max width=11.0cm,max height=8.0cm") == 4
+    assert r"\mathbankneedspace{8.5cm}" in tex
+    assert tex.count(r"\begin{flushright}") == 4
+    assert r"\vspace*{7.0cm}" in tex
 
 
 def test_latex_export_bounds_full_width_multicolumn_and_keeps_multirow():

@@ -705,7 +705,7 @@ def test_question_selection_and_save_are_transactional():
     save_source = import_source[save_start:save_end]
 
     assert "EditorState.useQuestion(item)" not in select_source
-    assert select_source.index(".then(fullItem =>") < select_source.index("EditorState.useQuestion(fullItem)")
+    assert select_source.index(".then(async fullItem =>") < select_source.index("EditorState.useQuestion(fullItem)")
     assert "questionDetailLoading = true" in select_source
     assert "questionDetailLoading = false" in select_source
     assert "loadSequence !== questionDetailLoadSequence" in select_source
@@ -743,6 +743,24 @@ const window = {{}};
 let originalQuestionState = null;
 let uploadedImages = ['/static/uploads/saved.png'];
 const TikzState = {{ contentAssets: [], answerAssets: [] }};
+const EditorState = {{ questionId: 17 }};
+const FigureLayoutState = {{
+  align: 'right',
+  size: 'auto',
+  customAlign: false,
+  setAlign(value) {{ this.align = value; }},
+  setSize(value) {{ this.size = value; }},
+  setCustomAlign(value) {{ this.customAlign = Boolean(value); }},
+  snapshot() {{
+    return {{
+      figure_align: this.align,
+      figure_size: this.size,
+      figure_align_custom: this.customAlign
+    }};
+  }}
+}};
+window.EditorState = EditorState;
+window.FigureLayoutState = FigureLayoutState;
 const values = {{
   editContent: 'request payload',
   editAnswerMarkdown: 'saved answer',
@@ -788,6 +806,35 @@ elements.editRelatedQuestion.value = '23';
 if (!isEditorModified()) throw new Error('post-submit related-question change was incorrectly marked saved');
 elements.editRelatedQuestion.value = '';
 if (isEditorModified()) throw new Error('restoring related-question snapshot should clear dirty state');
+
+// A detail GET may have restored the old clean layout while a paper-side
+// layout write was in flight. The confirmation should advance both state and
+// baseline instead of leaving a false dirty editor.
+if (!reconcileEditorFigureLayout(
+  17,
+  {{ figure_align: 'bottom_right', figure_size: 'large' }},
+  {{ figure_align: 'bottom_right', figure_size: 'large' }},
+  true
+)) throw new Error('current editor layout was not reconciled');
+if (FigureLayoutState.align !== 'bottom_right' || FigureLayoutState.size !== 'large') {{
+  throw new Error('clean stale detail layout did not advance to the confirmed value');
+}}
+if (isEditorModified()) throw new Error('confirmed layout left a false dirty editor');
+
+// A newer editor-only choice must remain visible while only the persisted
+// baseline advances to the server-confirmed paper value.
+FigureLayoutState.setAlign('center');
+FigureLayoutState.setSize('medium');
+reconcileEditorFigureLayout(
+  17,
+  {{ figure_align: 'right', figure_size: 'small' }},
+  {{ figure_align: 'bottom_right', figure_size: 'large' }},
+  true
+);
+if (FigureLayoutState.align !== 'center' || FigureLayoutState.size !== 'medium') {{
+  throw new Error('newer editor-only layout was overwritten');
+}}
+if (!isEditorModified()) throw new Error('newer editor-only layout was incorrectly marked saved');
 """
 
     result = subprocess.run(

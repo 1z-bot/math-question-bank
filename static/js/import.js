@@ -77,6 +77,7 @@
 
         function resetTikzEditorState() {
             TikzState.reset();
+            FigureLayoutState.reset();
             if (typeof window.renderContentTikzAssets === 'function') window.renderContentTikzAssets();
             if (typeof window.renderAnswerTikzAssets === 'function') window.renderAnswerTikzAssets();
         }
@@ -538,6 +539,11 @@
             }
             EditorState.beginTransition();
             const loadSequence = ++questionDetailLoadSequence;
+            const figureLayoutRevisionAtRequest = typeof window.getFigureLayoutMutationRevision === 'function'
+                ? window.getFigureLayoutMutationRevision(requestedQuestionId)
+                : 0;
+            const figureLayoutPendingAtRequest = typeof window.hasPendingFigureLayoutWrite === 'function'
+                && window.hasPendingFigureLayoutWrite(requestedQuestionId);
             questionDetailLoading = true;
             updateQuestionSaveButtonState();
 
@@ -547,12 +553,34 @@
                     if (!r.ok) throw new Error('无法加载题目详情');
                     return r.json();
                 })
-                .then(fullItem => {
+                .then(async fullItem => {
                     if (loadSequence !== questionDetailLoadSequence) {
                         return;
                     }
                     if (!fullItem || Number(fullItem.id) !== requestedQuestionId) {
                         throw new Error('题目详情与请求 ID 不匹配');
+                    }
+                    const currentFigureLayoutRevision = typeof window.getFigureLayoutMutationRevision === 'function'
+                        ? window.getFigureLayoutMutationRevision(requestedQuestionId)
+                        : figureLayoutRevisionAtRequest;
+                    const figureLayoutStillPending = typeof window.hasPendingFigureLayoutWrite === 'function'
+                        && window.hasPendingFigureLayoutWrite(requestedQuestionId);
+                    if (figureLayoutPendingAtRequest || figureLayoutStillPending
+                            || currentFigureLayoutRevision !== figureLayoutRevisionAtRequest) {
+                        if (typeof window.waitForFigureLayoutWrite === 'function') {
+                            await window.waitForFigureLayoutWrite(requestedQuestionId);
+                        }
+                        if (loadSequence !== questionDetailLoadSequence) return;
+                        const latestLayout = typeof window.getCurrentQuestionFigureLayout === 'function'
+                            ? window.getCurrentQuestionFigureLayout(requestedQuestionId)
+                            : null;
+                        if (latestLayout) {
+                            fullItem.figure_align = latestLayout.figure_align;
+                            fullItem.figure_size = latestLayout.figure_size;
+                            fullItem.figure_align_custom = Boolean(
+                                latestLayout.figure_align_custom
+                            );
+                        }
                     }
                     EditorState.useQuestion(fullItem);
                     document.getElementById('editorTitle').textContent = '编辑数学题';
@@ -579,6 +607,7 @@
                     document.getElementById('editReview').value = fullItem.review || '';
 
                     window.hydrateTikzState(fullItem);
+                    FigureLayoutState.hydrate(fullItem);
                     const allStoredImages = Array.isArray(fullItem.image_paths)
                         ? fullItem.image_paths.map(path => window.MathBankSafe.safeImageUrl(path)).filter(Boolean)
                         : [];
@@ -689,6 +718,14 @@
             }
 
             const saveOperation = (async () => {
+                const pendingLayoutQuestionId = EditorState.questionId;
+                if (pendingLayoutQuestionId && typeof window.waitForFigureLayoutWrite === 'function') {
+                    await window.waitForFigureLayoutWrite(pendingLayoutQuestionId);
+                    if (EditorState.questionId !== pendingLayoutQuestionId) {
+                        showToast('题目编辑会话已变化，本次保存已取消。', 'info');
+                        return false;
+                    }
+                }
                 const editorSession = EditorState.snapshot();
                 const content = document.getElementById('editContent').value;
                 const qtype = document.getElementById('editQType').value;
@@ -710,6 +747,7 @@
                     : '';
                 const rawTags = document.getElementById('editTags') ? document.getElementById('editTags').value : '';
                 const tags = rawTags.trim();
+                const figureLayout = FigureLayoutState.snapshot();
                 
                 if (!content.trim()) {
                     showToast('保存失败：题干内容不能为空！', 'error');
@@ -786,6 +824,9 @@
                     tikz_reference_image_path: tikzReferencePath,
                     content_tikz_assets: JSON.stringify(contentTikzAssets),
                     answer_tikz_assets: JSON.stringify(TikzState.answerAssets),
+                    figure_align: figureLayout.figure_align,
+                    figure_size: figureLayout.figure_size,
+                    figure_align_custom: figureLayout.figure_align_custom,
                     tags: rawTags
                 });
                 if (typeof window.editorMatchesBackupSnapshot === 'function' &&
@@ -809,6 +850,12 @@
                 formData.append('tikz_reference_image_path', tikzReferencePath);
                 formData.append('content_tikz_assets', JSON.stringify(contentTikzAssets));
                 formData.append('answer_tikz_assets', JSON.stringify(TikzState.answerAssets));
+                formData.append('figure_align', figureLayout.figure_align);
+                formData.append('figure_size', figureLayout.figure_size);
+                formData.append(
+                    'figure_align_custom',
+                    figureLayout.figure_align_custom ? 'true' : 'false'
+                );
                 formData.append('tags', tags);
                 const combinedImages = Array.from(new Set([
                     ...uploadedImages,

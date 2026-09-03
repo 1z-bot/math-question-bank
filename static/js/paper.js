@@ -86,6 +86,9 @@
         const defaultAlign = (window.PaperStore.meta.paper_type === 'quiz') ? 'bottom_right' : 'right';
         if (!q) return defaultAlign;
         if (q.custom_figure_align) return q.custom_figure_align;
+        if (q.figure_align_custom && ['right', 'center', 'bottom_right'].includes(q.figure_align)) {
+            return q.figure_align;
+        }
         if (q.figure_align && q.figure_align !== 'right') return q.figure_align;
         return defaultAlign;
     }
@@ -339,6 +342,7 @@
 
     // Fetch Questions from DB for Question Bank Stream
     async function fetchBankQuestions() {
+        const protectedFigureLayouts = snapshotFigureLayoutsForBankFetch();
         const f = window.PaperStore.filters;
         const params = new URLSearchParams();
         if (f.compulsory) {
@@ -369,6 +373,7 @@
             const res = await fetch(`/api/questions?${params.toString()}`);
             const questions = await res.json();
             if (Array.isArray(questions)) {
+                questions.forEach(q => preserveNewerFigureLayout(q, protectedFigureLayouts));
                 window.PaperStore.bankQuestions = questions;
                 questions.forEach(q => {
                     window.PaperStore.questionsMap[q.id] = q;
@@ -898,7 +903,7 @@
 
                     <!-- Full Question Render Content -->
                     <div class="question-full-render-box text-sm leading-relaxed text-slate-800 dark:text-slate-100 overflow-x-auto select-text" id="paper-q-render-${q.id}">
-                        ${formatQuestionContentHtml(q.content, q.id, getQuestionFigAlign(q), false, false)}
+                        ${formatQuestionContentHtml(q.content, q.id, getQuestionFigAlign(q), false, false, getQuestionFigSize(q))}
                     </div>
 
                     ${answerExpanded ? `
@@ -957,6 +962,7 @@
                 } catch (e) { }
             }
         });
+        initializeAutoFigureSizing(container);
     }
 
     // Render Part 4: Right A4 Canvas & Action Bar
@@ -1135,6 +1141,7 @@
                 }
             } catch (e) { }
         }
+        initializeAutoFigureSizing(sheet);
 
         // 恢复更新前的滚动位置，保证调排版/留白/格式时在原视口位置零跳跃渲染
         const restoreScroll = () => {
@@ -1323,6 +1330,9 @@
                 const q = window.PaperStore.questionsMap[item.id];
                 let rawContent = q ? q.content : '';
                 const figAlign = getQuestionFigAlign(q);
+                const figSize = getQuestionFigSize(q);
+                const figureMetrics = getDetachedFigureMetrics(rawContent, figAlign, figSize);
+                const renderedFigAlign = figureMetrics.effectiveAlign;
 
                 let solSpaceCm = 0;
                 let isSolSpaceEmbedded = false;
@@ -1333,7 +1343,7 @@
                     solSpaceCm = parseFloat(item.solution_space !== undefined ? item.solution_space : defaultSpace);
                     if (isNaN(solSpaceCm)) solSpaceCm = 0.0;
 
-                    if (solSpaceCm > 0 && (figAlign === 'bottom_right' || figAlign === 'center')) {
+                    if (solSpaceCm > 0 && (renderedFigAlign === 'bottom_right' || renderedFigAlign === 'center')) {
                         isSolSpaceEmbedded = true;
                     }
                 }
@@ -1342,9 +1352,9 @@
                 const choiceContentParts = isChoiceQuestion
                     ? splitChoiceContentForPaperPreview(rawContent)
                     : { stemRaw: rawContent, choicesRaw: '' };
-                let contentRes = q ? formatQuestionContentHtml(choiceContentParts.stemRaw, q.id, figAlign, isSolSpaceEmbedded) : '';
+                let contentRes = q ? formatQuestionContentHtml(choiceContentParts.stemRaw, q.id, figAlign, isSolSpaceEmbedded, true, figSize) : '';
                 const separatedChoicesHtml = q && choiceContentParts.choicesRaw
-                    ? formatQuestionContentHtml(choiceContentParts.choicesRaw, q.id, figAlign, false, false)
+                    ? formatQuestionContentHtml(choiceContentParts.choicesRaw, q.id, figAlign, false, false, figSize)
                     : '';
                 let contentHtml = '';
                 let embeddedImgHtml = '';
@@ -1391,7 +1401,7 @@
 
                     let embeddedImgContainer = '';
                     if (isSolSpaceEmbedded && embeddedImgHtml) {
-                        const posClass = figAlign === 'center' ? 'left-1/2 -translate-x-1/2' : 'right-3';
+                        const posClass = renderedFigAlign === 'center' ? 'left-1/2 -translate-x-1/2' : 'right-3';
                         embeddedImgContainer = `
                             <div class="absolute ${posClass} top-2 z-10">
                                 ${embeddedImgHtml}
@@ -1399,8 +1409,11 @@
                         `;
                     }
 
+                    const embeddedFigureHeight = figureMetrics.count > 0
+                        ? Math.max(180, figureMetrics.blockHeight)
+                        : 180;
                     const minHeightStyle = (isSolSpaceEmbedded && embeddedImgHtml)
-                        ? `min-height: ${Math.max(spacePx, 180)}px; height: ${Math.max(spacePx, 180)}px;`
+                        ? `min-height: ${Math.max(spacePx, embeddedFigureHeight)}px; height: ${Math.max(spacePx, embeddedFigureHeight)}px;`
                         : (isZero ? 'min-height: 20px;' : `height: ${spacePx}px;`);
 
                     solutionBlankHtml = `
@@ -1471,7 +1484,17 @@
                 `;
 
                 let estH = 75;
-                if (qType === 'detailed_answer') estH = 120 + Math.round(solSpaceCm * 35);
+                if (qType === 'detailed_answer') {
+                    const solutionHeight = isSolSpaceEmbedded
+                        ? Math.max(Math.round(solSpaceCm * 35), figureMetrics.blockHeight, 180)
+                        : Math.round(solSpaceCm * 35);
+                    estH = 120 + solutionHeight;
+                    if (figureMetrics.count > 0 && !isSolSpaceEmbedded) {
+                        estH += figureMetrics.blockHeight;
+                    }
+                } else if (figureMetrics.count > 0) {
+                    estH += figureMetrics.blockHeight;
+                }
                 if (rawContent.length > 200) estH += 60;
 
                 blocks.push({
@@ -1797,6 +1820,8 @@
                 score: item.score,
                 order: idx + 1,
                 figure_align: getQuestionFigAlign(q),
+                figure_align_custom: Boolean(q.figure_align_custom || q.custom_figure_align),
+                figure_size: getQuestionFigSize(q),
                 solution_space: item.solution_space !== undefined ? item.solution_space.toString() : defaultSpace
             };
         });
@@ -2593,7 +2618,9 @@
                 const cartQuestions = (paper.questions || []).map(item => ({
                     id: item.id,
                     score: item.score,
-                    figure_align: getQuestionFigAlign(item.question)
+                    figure_align: getQuestionFigAlign(item.question),
+                    figure_align_custom: Boolean(item.question.figure_align_custom || item.question.custom_figure_align),
+                    figure_size: getQuestionFigSize(item.question)
                 }));
 
                 const tab = window.open('', '_blank');
@@ -2696,48 +2723,276 @@
         return `<span class="px-2 py-0.5 rounded-lg text-xs font-semibold ${colorClass}">${escapeHtml(cleanLabel)}</span>`;
     }
 
-    window.setFigureAlign = function (qid, alignVal) {
-        qid = parseInt(qid, 10);
-        if (!qid) return;
+    const figureLayoutWrites = Object.create(null);
+    const figureLayoutMutationRevision = Object.create(null);
 
-        // 1. Optimistically update local memory store
-        if (window.PaperStore.questionsMap[qid]) {
-            window.PaperStore.questionsMap[qid].figure_align = alignVal;
-            window.PaperStore.questionsMap[qid].custom_figure_align = alignVal;
+    function persistedFigureAlign(q) {
+        const value = String(q && q.figure_align || 'right');
+        return ['right', 'center', 'bottom_right'].includes(value) ? value : 'right';
+    }
+
+    function snapshotFigureLayoutsForBankFetch() {
+        const revisions = { ...figureLayoutMutationRevision };
+        const pending = Object.create(null);
+        Object.keys(figureLayoutWrites).forEach(key => {
+            const state = figureLayoutWrites[key];
+            const q = window.PaperStore.questionsMap[key];
+            if (!state || state.pending <= 0 || !q) return;
+            pending[key] = {
+                figure_align: persistedFigureAlign(q),
+                custom_figure_align: q.custom_figure_align,
+                figure_align_custom: Boolean(q.figure_align_custom),
+                figure_size: getQuestionFigSize(q)
+            };
+        });
+        return { revisions, pending };
+    }
+
+    function preserveNewerFigureLayout(question, snapshot) {
+        const qid = parseInt(question && question.id, 10);
+        if (!qid || !snapshot) return;
+        const revisionChanged = (figureLayoutMutationRevision[qid] || 0)
+            !== (snapshot.revisions[qid] || 0);
+        const pendingLayout = snapshot.pending[qid];
+        if (!revisionChanged && !pendingLayout) return;
+        const current = window.PaperStore.questionsMap[qid];
+        const source = current || pendingLayout;
+        if (!source) return;
+        question.figure_align = persistedFigureAlign(source);
+        question.custom_figure_align = source.custom_figure_align;
+        question.figure_align_custom = Boolean(source.figure_align_custom || source.custom_figure_align);
+        question.figure_size = getQuestionFigSize(source);
+    }
+
+    function getFigureLayoutWriteState(qid, q) {
+        if (!figureLayoutWrites[qid]) {
+            figureLayoutWrites[qid] = {
+                revision: 0,
+                pending: 0,
+                tail: Promise.resolve(),
+                settled: Promise.resolve(),
+                confirmed: {
+                    figure_align: persistedFigureAlign(q),
+                    custom_figure_align: q.custom_figure_align,
+                    figure_align_custom: Boolean(q.figure_align_custom),
+                    figure_size: getQuestionFigSize(q)
+                }
+            };
         }
+        return figureLayoutWrites[qid];
+    }
 
-        // Close popover
-        const existingPopover = document.getElementById('figureAlignPopoverMenu');
-        if (existingPopover) existingPopover.remove();
+    window.waitForFigureLayoutWrite = async function(qid) {
+        const normalizedId = parseInt(qid, 10);
+        if (!normalizedId) return;
+        while (true) {
+            const state = figureLayoutWrites[normalizedId];
+            if (!state || state.pending <= 0) return;
+            const observed = state.settled;
+            await observed.catch(() => undefined);
+            const latest = figureLayoutWrites[normalizedId];
+            if (!latest || latest.pending <= 0) return;
+        }
+    };
 
-        // 2. Optimistically re-render UI IMMEDIATELY for instant visual feedback!
+    window.hasPendingFigureLayoutWrite = function(qid) {
+        const normalizedId = parseInt(qid, 10);
+        const state = normalizedId ? figureLayoutWrites[normalizedId] : null;
+        return Boolean(state && state.pending > 0);
+    };
+
+    window.getFigureLayoutMutationRevision = function(qid) {
+        const normalizedId = parseInt(qid, 10);
+        return normalizedId ? (figureLayoutMutationRevision[normalizedId] || 0) : 0;
+    };
+
+    window.getCurrentQuestionFigureLayout = function(qid) {
+        const normalizedId = parseInt(qid, 10);
+        const question = normalizedId ? window.PaperStore.questionsMap[normalizedId] : null;
+        return question ? {
+            figure_align: persistedFigureAlign(question),
+            figure_align_custom: Boolean(question.figure_align_custom || question.custom_figure_align),
+            figure_size: getQuestionFigSize(question)
+        } : null;
+    };
+
+    function applyQuestionFigureLayout(question, layout) {
+        if (!question || !layout) return;
+        question.figure_align = persistedFigureAlign(layout);
+        question.custom_figure_align = layout.custom_figure_align;
+        question.figure_align_custom = Boolean(layout.figure_align_custom || layout.custom_figure_align);
+        question.figure_size = normalizeFigureSize(layout.figure_size);
+    }
+
+    function rerenderFigureLayoutPreviews() {
         if (typeof window.renderPart3QuestionStream === 'function') {
             window.renderPart3QuestionStream();
         }
         if (typeof window.renderPaperCanvas === 'function') {
             window.renderPaperCanvas();
         }
+    }
 
-        // 3. Send POST API request to persist in DB (api.js monkey-patch automatically attaches X-Local-Token)
+    function refreshCurrentEditorFigureLayout(qid) {
+        if (!window.EditorState || window.EditorState.questionId !== qid) return;
+        if (typeof window.renderIllustrationBadges === 'function') {
+            window.renderIllustrationBadges();
+        }
+        const textarea = document.getElementById('editContent');
+        if (textarea) textarea.dispatchEvent(new Event('input'));
+        if (typeof window.applyEditorFigureLayoutPreview === 'function') {
+            window.applyEditorFigureLayoutPreview();
+        }
+    }
+
+    function syncCurrentEditorFigureLayout(qid, layout, commitBaseline = false, expectedCurrent = null) {
+        if (!window.EditorState || window.EditorState.questionId !== qid || !window.FigureLayoutState) {
+            return;
+        }
+        const align = persistedFigureAlign(layout);
+        const size = normalizeFigureSize(layout && layout.figure_size);
+        const customAlign = Boolean(
+            layout && (layout.figure_align_custom || layout.custom_figure_align)
+        );
+        if (commitBaseline && typeof window.commitEditorFigureLayoutBaseline === 'function') {
+            window.commitEditorFigureLayoutBaseline(qid, align, size, customAlign);
+        }
+        if (expectedCurrent && typeof window.FigureLayoutState.snapshot === 'function') {
+            const editorLayout = window.FigureLayoutState.snapshot();
+            if (editorLayout.figure_align !== persistedFigureAlign(expectedCurrent)
+                    || editorLayout.figure_size !== normalizeFigureSize(expectedCurrent.figure_size)
+                    || Boolean(editorLayout.figure_align_custom) !== Boolean(
+                        expectedCurrent.figure_align_custom || expectedCurrent.custom_figure_align
+                    )) {
+                return;
+            }
+        }
+        window.FigureLayoutState.setAlign(align);
+        window.FigureLayoutState.setSize(size);
+        window.FigureLayoutState.setCustomAlign(customAlign);
+        refreshCurrentEditorFigureLayout(qid);
+    }
+
+    window.setFigureLayout = function (qid, alignVal, sizeVal) {
+        qid = parseInt(qid, 10);
+        if (!qid) return;
+        const q = window.PaperStore.questionsMap[qid];
+        if (!q) return;
+        if (typeof window.isQuestionSaveInFlight === 'function' && window.isQuestionSaveInFlight()) {
+            if (window.showToast) window.showToast('题目正在保存，请稍候再调整插图排版。', 'info');
+            return;
+        }
+
+        const allowedAlignments = ['right', 'center', 'bottom_right'];
+        const nextAlign = allowedAlignments.includes(alignVal) ? alignVal : getQuestionFigAlign(q);
+        const nextSize = normalizeFigureSize(sizeVal);
+        const writeState = getFigureLayoutWriteState(qid, q);
+        const requestSequence = writeState.revision + 1;
+        writeState.revision = requestSequence;
+        writeState.pending += 1;
+        figureLayoutMutationRevision[qid] = (figureLayoutMutationRevision[qid] || 0) + 1;
+        const requestedLayout = {
+            figure_align: nextAlign,
+            custom_figure_align: nextAlign,
+            figure_align_custom: true,
+            figure_size: nextSize
+        };
+
+        // Optimistically update both layout dimensions so position and size never
+        // drift apart between the bank card and the A4 canvas.
+        applyQuestionFigureLayout(q, requestedLayout);
+        syncCurrentEditorFigureLayout(qid, requestedLayout);
+
+        const existingPopover = document.getElementById('figureAlignPopoverMenu');
+        if (existingPopover) existingPopover.remove();
+        rerenderFigureLayoutPreviews();
+
         const formData = new FormData();
-        formData.append('figure_align', alignVal);
+        formData.append('figure_align', nextAlign);
+        formData.append('figure_size', nextSize);
 
-        fetch(`/api/questions/${qid}/figure_align`, {
-            method: 'POST',
-            body: formData
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (data.status === 'success') {
-                const labelMap = { 'right': '题干右侧', 'center': '下方居中', 'bottom_right': '下方居右' };
-                const q = window.PaperStore.questionsMap[qid];
-                const seqNum = (q && q.seq_num !== undefined) ? q.seq_num : qid;
-                if (window.showToast) window.showToast(`已调整题目 #${seqNum} 插图排版为：${labelMap[alignVal] || alignVal}`, 'success');
+        const requestPromise = writeState.tail.catch(() => undefined).then(() => fetch(
+            `/api/questions/${qid}/figure_layout`,
+            { method: 'POST', body: formData }
+        )).then(async res => {
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || data.status !== 'success') {
+                throw new Error(data.detail || data.message || `HTTP ${res.status}`);
+            }
+            return data;
+        });
+        writeState.tail = requestPromise;
+
+        writeState.settled = requestPromise.then(data => {
+            writeState.confirmed = {
+                figure_align: allowedAlignments.includes(data.figure_align) ? data.figure_align : nextAlign,
+                custom_figure_align: allowedAlignments.includes(data.figure_align) ? data.figure_align : nextAlign,
+                figure_align_custom: data.figure_align_custom !== false,
+                figure_size: normalizeFigureSize(data.figure_size || nextSize)
+            };
+            const editorReconciled = typeof window.reconcileEditorFigureLayout === 'function'
+                && window.reconcileEditorFigureLayout(
+                    qid,
+                    writeState.confirmed,
+                    requestedLayout,
+                    true
+                );
+            if (!editorReconciled && typeof window.commitEditorFigureLayoutBaseline === 'function'
+                    && window.EditorState && window.EditorState.questionId === qid) {
+                window.commitEditorFigureLayoutBaseline(
+                    qid,
+                    writeState.confirmed.figure_align,
+                    writeState.confirmed.figure_size,
+                    writeState.confirmed.figure_align_custom
+                );
+            }
+            if (writeState.revision !== requestSequence) return;
+            const currentQuestion = window.PaperStore.questionsMap[qid];
+            applyQuestionFigureLayout(currentQuestion, writeState.confirmed);
+            if (editorReconciled) refreshCurrentEditorFigureLayout(qid);
+            else syncCurrentEditorFigureLayout(qid, writeState.confirmed, true, requestedLayout);
+            rerenderFigureLayoutPreviews();
+            const alignLabels = { 'right': '题干右侧', 'center': '下方居中', 'bottom_right': '下方居右' };
+            const seqNum = currentQuestion && currentQuestion.seq_num !== undefined
+                ? currentQuestion.seq_num
+                : qid;
+            if (window.showToast) {
+                window.showToast(`已调整题目 #${seqNum} 插图：${alignLabels[writeState.confirmed.figure_align]} · ${FIGURE_SIZE_LABELS[writeState.confirmed.figure_size]}`, 'success');
             }
         })
         .catch(err => {
-            console.error('Update figure_align failed:', err);
+            if (writeState.revision !== requestSequence) return;
+            const currentQuestion = window.PaperStore.questionsMap[qid];
+            applyQuestionFigureLayout(currentQuestion, writeState.confirmed);
+            const editorReconciled = typeof window.reconcileEditorFigureLayout === 'function'
+                && window.reconcileEditorFigureLayout(
+                    qid,
+                    writeState.confirmed,
+                    requestedLayout,
+                    false
+                );
+            if (editorReconciled) refreshCurrentEditorFigureLayout(qid);
+            else syncCurrentEditorFigureLayout(qid, writeState.confirmed, false, requestedLayout);
+            rerenderFigureLayoutPreviews();
+            console.error('Update figure layout failed:', err);
+            if (window.showToast) window.showToast(`插图排版保存失败：${err.message}`, 'error');
+        })
+        .finally(() => {
+            writeState.pending = Math.max(0, writeState.pending - 1);
+            if (writeState.pending === 0 && writeState.revision === requestSequence) {
+                delete figureLayoutWrites[qid];
+            }
         });
+    };
+
+    window.setFigureAlign = function (qid, alignVal) {
+        const q = window.PaperStore.questionsMap[parseInt(qid, 10)] || {};
+        window.setFigureLayout(qid, alignVal, getQuestionFigSize(q));
+    };
+
+    window.setFigureSize = function (qid, sizeVal) {
+        const q = window.PaperStore.questionsMap[parseInt(qid, 10)] || {};
+        window.setFigureLayout(qid, getQuestionFigAlign(q), sizeVal);
     };
 
     window.showFigureAlignPopover = function (event, qid) {
@@ -2747,6 +3002,7 @@
         qid = parseInt(qid, 10);
         const q = window.PaperStore.questionsMap[qid] || {};
         const currentAlign = getQuestionFigAlign(q);
+        const currentSize = getQuestionFigSize(q);
 
         // Remove existing popover
         const existingPopover = document.getElementById('figureAlignPopoverMenu');
@@ -2754,22 +3010,22 @@
 
         const popover = document.createElement('div');
         popover.id = 'figureAlignPopoverMenu';
-        popover.className = 'fixed z-50 bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200 shadow-xl p-2 font-sans text-xs flex flex-col space-y-1 animate-in fade-in zoom-in-95 duration-150 dark:bg-slate-800 dark:border-slate-700 text-slate-800 dark:text-slate-100';
+        popover.className = 'fixed z-50 w-56 bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200 shadow-xl p-2 font-sans text-xs flex flex-col space-y-1 animate-in fade-in zoom-in-95 duration-150 dark:bg-slate-800 dark:border-slate-700 text-slate-800 dark:text-slate-100';
 
         // Position popover near mouse cursor
         let left = event.clientX + 5;
         let top = event.clientY + 5;
 
         // Keep inside viewport bounds
-        if (left + 170 > window.innerWidth) left = window.innerWidth - 180;
-        if (top + 150 > window.innerHeight) top = window.innerHeight - 160;
+        if (left + 220 > window.innerWidth) left = window.innerWidth - 230;
+        if (top + 220 > window.innerHeight) top = window.innerHeight - 230;
 
         popover.style.left = `${left}px`;
         popover.style.top = `${top}px`;
 
         popover.innerHTML = `
             <div class="px-2 py-1 text-[11px] font-bold text-slate-400 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
-                <span><i class="fa-solid fa-sliders text-brand-500 mr-1"></i> 调整插图排版位置</span>
+                <span><i class="fa-solid fa-sliders text-brand-500 mr-1"></i> 调整插图排版</span>
                 <button onclick="document.getElementById('figureAlignPopoverMenu').remove()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <button onclick="window.setFigureAlign(${qid}, 'right')" class="w-full text-left px-3 py-1.5 rounded-xl hover:bg-brand-50 hover:text-brand-600 transition-colors flex items-center justify-between ${currentAlign === 'right' ? 'bg-brand-50 font-bold text-brand-600' : ''}">
@@ -2784,6 +3040,19 @@
                 <span><i class="fa-solid fa-align-right text-xs mr-2 text-brand-500"></i> 题干下方居右</span>
                 ${currentAlign === 'bottom_right' ? '<i class="fa-solid fa-check text-xs"></i>' : ''}
             </button>
+            <div class="mt-1 border-t border-slate-100 px-1 pt-2 dark:border-slate-700">
+                <div class="mb-1 flex items-center justify-between px-1 text-[10px] text-slate-400">
+                    <span>尺寸</span>
+                    <span>${currentAlign === 'right' ? '右侧模式自动限宽' : '下方布局生效'}</span>
+                </div>
+                <div class="flex items-center gap-1">
+                    ${FIGURE_SIZE_VALUES.map(size => `
+                        <button type="button" onclick="window.setFigureSize(${qid}, '${size}')"
+                            class="min-w-0 flex-1 rounded-md border px-1.5 py-1 text-center text-[10px] transition-colors ${currentSize === size ? 'border-brand-200 bg-brand-50 font-bold text-brand-700' : 'border-slate-200 bg-white text-slate-500 hover:border-brand-200 hover:text-brand-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300'}"
+                            aria-label="插图尺寸：${FIGURE_SIZE_LABELS[size]}">${FIGURE_SIZE_LABELS[size]}</button>
+                    `).join('')}
+                </div>
+            </div>
         `;
 
         document.body.appendChild(popover);
@@ -2854,10 +3123,128 @@
         return trailingContent.length > 0;
     }
 
-    function formatQuestionContentHtml(raw, qid = null, figAlign = 'right', embedInSolSpace = false, showControls = true) {
+    const FIGURE_SIZE_VALUES = ['auto', 'small', 'medium', 'large'];
+    const FIGURE_SIZE_LABELS = {
+        auto: '自动',
+        small: '小',
+        medium: '中',
+        large: '大'
+    };
+
+    function normalizeFigureSize(value) {
+        return FIGURE_SIZE_VALUES.includes(value) ? value : 'auto';
+    }
+
+    function getQuestionFigSize(q) {
+        return normalizeFigureSize(q && q.figure_size);
+    }
+
+    function getFigureDimensions(figSize, figAlign, imageCount) {
+        const count = Math.max(1, parseInt(imageCount, 10) || 1);
+        if (figAlign === 'right') {
+            return count > 1
+                ? { maxWidth: 125, maxHeight: 115 }
+                : { maxWidth: 155, maxHeight: 135 };
+        }
+
+        const size = normalizeFigureSize(figSize);
+        if (size === 'medium') return { maxWidth: 320, maxHeight: 240 };
+        if (size === 'large') return { maxWidth: 420, maxHeight: 300 };
+        if (size === 'auto' && count > 1) return { maxWidth: 150, maxHeight: 140 };
+        return { maxWidth: 200, maxHeight: 170 };
+    }
+
+    function getDetachedFigureMetrics(raw, figAlign, figSize) {
+        const source = String(raw || '');
+        if (shouldPreserveInlinePaperImages(source)) {
+            return {
+                count: 0,
+                effectiveAlign: figAlign || 'right',
+                maxWidth: 0,
+                maxHeight: 0,
+                blockHeight: 0
+            };
+        }
+
+        const sources = [];
+        const imagePattern = /!\[.*?\]\(([^)]+)\)/g;
+        let match;
+        while ((match = imagePattern.exec(source)) !== null) {
+            const value = String(match[1] || '').trim();
+            if (value && !sources.includes(value)) sources.push(value);
+        }
+        const count = sources.length;
+        const effectiveAlign = count > 1 && figAlign === 'right'
+            ? 'center'
+            : (figAlign || 'right');
+        if (count === 0) {
+            return { count, effectiveAlign, maxWidth: 0, maxHeight: 0, blockHeight: 0 };
+        }
+
+        let dimensions = getFigureDimensions(figSize, effectiveAlign, count);
+        if (normalizeFigureSize(figSize) === 'auto' && count === 1 && effectiveAlign !== 'right') {
+            // Natural dimensions are not available until the image loads. Reserve
+            // the wide-image ceiling up front so pagination and solution space
+            // cannot clip a late auto expansion from 200px to 420px.
+            dimensions = { maxWidth: 420, maxHeight: 300 };
+        }
+        if (effectiveAlign === 'right') {
+            return {
+                count,
+                effectiveAlign,
+                ...dimensions,
+                blockHeight: Math.max(0, dimensions.maxHeight - 70)
+            };
+        }
+
+        // The A4 body is about 714px wide. Estimate wrapped rows conservatively
+        // so larger figures do not get grouped onto a page that will clip them.
+        const columns = Math.max(1, Math.floor(700 / (dimensions.maxWidth + 8)));
+        const rows = Math.ceil(count / columns);
+        return {
+            count,
+            effectiveAlign,
+            ...dimensions,
+            blockHeight: rows * dimensions.maxHeight + Math.max(0, rows - 1) * 8 + 30
+        };
+    }
+
+    function figureImageStyle(dimensions) {
+        return `max-width: min(100%, ${dimensions.maxWidth}px); max-height: ${dimensions.maxHeight}px; width: auto; height: auto;`;
+    }
+
+    function applyAutoFigureImageSize(image) {
+        if (!image || image.dataset.figureSize !== 'auto') return;
+        if (image.dataset.figureAlign === 'right' || image.dataset.figureImageCount !== '1') return;
+        if (!(image.naturalWidth > 0) || !(image.naturalHeight > 0)) return;
+
+        const isWide = image.naturalWidth / image.naturalHeight >= 1.6;
+        const dimensions = isWide
+            ? { maxWidth: 420, maxHeight: 300 }
+            : { maxWidth: 200, maxHeight: 170 };
+        image.style.maxWidth = `min(100%, ${dimensions.maxWidth}px)`;
+        image.style.maxHeight = `${dimensions.maxHeight}px`;
+        image.dataset.figureAutoResolved = isWide ? 'wide' : 'standard';
+    }
+
+    function initializeAutoFigureSizing(scope) {
+        if (!scope || !scope.querySelectorAll) return;
+        scope.querySelectorAll('img[data-figure-size="auto"]').forEach(image => {
+            if (image.complete) {
+                applyAutoFigureImageSize(image);
+                return;
+            }
+            if (image.dataset.figureAutoListening === 'true') return;
+            image.dataset.figureAutoListening = 'true';
+            image.addEventListener('load', () => applyAutoFigureImageSize(image), { once: true });
+        });
+    }
+
+    function formatQuestionContentHtml(raw, qid = null, figAlign = 'right', embedInSolSpace = false, showControls = true, figSize = 'auto') {
         if (!raw) return embedInSolSpace ? { stemHtml: '', imgHtml: null } : '';
         let html = String(raw).trim();
         figAlign = figAlign || 'right';
+        figSize = normalizeFigureSize(figSize);
 
         if (typeof window.cleanChoiceStemParentheses === 'function' && (html.includes('choices') || html.match(/^\s*[-*]?\s*[A-D][\.、\s]/m))) {
             if (html.includes('\\begin{choices}')) {
@@ -2910,31 +3297,35 @@
                 'bottom_right': '下方居右'
             };
             const currentLabel = alignLabelMap[effectiveAlign] || '下方居中';
+            const currentSizeLabel = FIGURE_SIZE_LABELS[figSize] || FIGURE_SIZE_LABELS.auto;
             const iconClass = effectiveAlign === 'center' ? 'fa-align-center' : 'fa-align-right';
             const qidAttr = parseInt(qid, 10) || 0;
             const countTag = imgSrcList.length > 1 ? ` (${imgSrcList.length}图)` : '';
+            const dimensions = getFigureDimensions(figSize, effectiveAlign, imgSrcList.length);
+            const imageStyle = figureImageStyle(dimensions);
+            const sizingAttrs = `data-figure-size="${figSize}" data-figure-align="${effectiveAlign}" data-figure-image-count="${imgSrcList.length}"`;
 
             const imgClass = showControls 
-                ? `${imgSrcList.length > 1 ? 'max-w-[150px] max-h-[140px]' : 'max-w-[200px] max-h-[170px]'} object-contain rounded-lg border border-slate-200 shadow-sm cursor-pointer hover:ring-2 hover:ring-brand-500 hover:scale-[1.02] transition-all inline-block`
-                : `${imgSrcList.length > 1 ? 'max-w-[150px] max-h-[140px]' : 'max-w-[200px] max-h-[170px]'} object-contain rounded-lg border border-slate-200 shadow-sm inline-block`;
+                ? 'paper-figure-image max-w-full object-contain rounded-lg border border-slate-200 shadow-sm cursor-pointer hover:ring-2 hover:ring-brand-500 hover:scale-[1.02] transition-all inline-block'
+                : 'paper-figure-image max-w-full object-contain rounded-lg border border-slate-200 shadow-sm inline-block';
 
             const imgsHtml = imgSrcList.map((src, idx) => {
                 const controlAttrs = showControls
                     ? `data-figure-align-qid="${qidAttr}" title="点击或右击可切换插图排版位置 (图${idx + 1} 当前: ${currentLabel})"`
                     : '';
-                return `<img src="${window.MathBankSafe.escapeAttribute(src)}" alt="题目配图 ${idx + 1}" class="${imgClass}" ${controlAttrs} loading="lazy" decoding="async">`;
+                return `<img src="${window.MathBankSafe.escapeAttribute(src)}" alt="题目配图 ${idx + 1}" class="${imgClass}" style="${imageStyle}" ${sizingAttrs} ${controlAttrs} loading="lazy" decoding="async">`;
             }).join('');
 
             const btnHtml = showControls ? `
                 <div class="mt-1 ${effectiveAlign === 'center' ? 'text-center' : 'text-right'}">
                     <button onclick="event.stopPropagation(); window.showFigureAlignPopover(event, ${qidAttr})" class="inline-flex items-center text-[10px] font-sans text-brand-700 bg-brand-50 hover:bg-brand-100 border border-brand-200/80 rounded-md px-1.5 py-0.5 transition-colors shadow-sm">
-                        <i class="fa-solid ${iconClass} text-[9px] mr-1 text-brand-500"></i> ${currentLabel}${countTag} <i class="fa-solid fa-chevron-down text-[8px] ml-1 opacity-70"></i>
+                        <i class="fa-solid ${iconClass} text-[9px] mr-1 text-brand-500"></i> ${currentLabel} · ${currentSizeLabel}${countTag} <i class="fa-solid fa-chevron-down text-[8px] ml-1 opacity-70"></i>
                     </button>
                 </div>
             ` : '';
 
             const imgControlHtml = `
-                <div class="inline-block relative group/fig">
+                <div class="inline-block max-w-full relative group/fig">
                     <div class="flex flex-wrap items-center ${effectiveAlign === 'center' ? 'justify-center' : 'justify-end'} gap-2">
                         ${imgsHtml}
                     </div>
@@ -2959,14 +3350,15 @@
                     const controlAttrs = showControls
                         ? `data-figure-align-qid="${qidAttr}" title="点击或右击可切换插图排版位置 (图${idx + 1} 当前: ${currentLabel})"`
                         : '';
+                    const rightDimensions = getFigureDimensions(figSize, 'right', imgSrcList.length);
                     const rightImgClass = showControls
-                        ? `${imgSrcList.length > 1 ? 'max-w-[125px] max-h-[115px]' : 'max-w-[155px] max-h-[135px]'} object-contain rounded-lg border border-slate-200 shadow-sm cursor-pointer hover:ring-2 hover:ring-brand-500 hover:scale-[1.02] transition-all inline-block`
-                        : `${imgSrcList.length > 1 ? 'max-w-[125px] max-h-[115px]' : 'max-w-[155px] max-h-[135px]'} object-contain rounded-lg border border-slate-200 shadow-sm inline-block`;
-                    return `<img src="${window.MathBankSafe.escapeAttribute(src)}" alt="题目配图 ${idx + 1}" class="${rightImgClass}" ${controlAttrs} loading="lazy" decoding="async">`;
+                        ? 'paper-figure-image max-w-full object-contain rounded-lg border border-slate-200 shadow-sm cursor-pointer hover:ring-2 hover:ring-brand-500 hover:scale-[1.02] transition-all inline-block'
+                        : 'paper-figure-image max-w-full object-contain rounded-lg border border-slate-200 shadow-sm inline-block';
+                    return `<img src="${window.MathBankSafe.escapeAttribute(src)}" alt="题目配图 ${idx + 1}" class="${rightImgClass}" style="${figureImageStyle(rightDimensions)}" data-figure-size="${figSize}" data-figure-align="right" data-figure-image-count="${imgSrcList.length}" ${controlAttrs} loading="lazy" decoding="async">`;
                 }).join('');
 
                 const rightImgControlHtml = `
-                    <div class="inline-block relative group/fig">
+                    <div class="inline-block max-w-full relative group/fig">
                         <div class="flex flex-wrap items-center justify-end gap-1.5">
                             ${rightImgsHtml}
                         </div>
