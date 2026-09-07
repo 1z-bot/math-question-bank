@@ -110,12 +110,22 @@ jobs:
           Set-Content -LiteralPath (Join-Path $stateDirectory 'server.pid') -Value $sleeper.Id
 
           function Invoke-PackagedLauncher {
-            # cmd.exe /s /c expects its own nested quoting, not PowerShell 7's
-            # standard native-argument escaping for an .exe target.
-            $PSNativeCommandArgumentPassing = 'Legacy'
-            $output = & $env:ComSpec /d /s /c ('""{0}""' -f $launcher) `
-              2>&1 | Out-String
-            $exitCode = $LASTEXITCODE
+            # Pass cmd's command line verbatim, without PowerShell re-quoting it.
+            $start = [Diagnostics.ProcessStartInfo]::new()
+            $start.FileName = $env:ComSpec
+            $start.Arguments = '/d /s /c ""{0}""' -f $launcher
+            $start.UseShellExecute = $false
+            $start.RedirectStandardOutput = $true
+            $start.RedirectStandardError = $true
+            $start.StandardOutputEncoding = [Text.Encoding]::UTF8
+            $start.StandardErrorEncoding = [Text.Encoding]::UTF8
+            $process = [Diagnostics.Process]::Start($start)
+            $stdout = $process.StandardOutput.ReadToEndAsync()
+            $stderr = $process.StandardError.ReadToEndAsync()
+            $process.WaitForExit()
+            $output = $stdout.GetAwaiter().GetResult() + $stderr.GetAwaiter().GetResult()
+            $exitCode = $process.ExitCode
+            $process.Dispose()
             Write-Host $output
             if ($exitCode -ne 0) {
               throw "Packaged launcher failed with exit code $exitCode."
