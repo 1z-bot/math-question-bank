@@ -85,7 +85,7 @@ If you are unfamiliar with command line or Python environments, head to the [**R
 * **Windows Users**: Use Windows 10/11 x64 and download `MathBank-Windows-x64.zip` (it includes the complete Python 3.10 and app-local VC++ runtimes; no separate runtime installation is required), extract it, and double-click **`启动题库系统.bat`**.
 * **macOS Users**: Download `MathBank-macOS.zip`. **The macOS package does not include Python, so confirm that Python 3.10 or newer is installed on the Mac before launching MathBank.** The launcher automatically detects a supported Python and creates or repairs the isolated project `venv`; if none is found, it asks the user to install one and stops. Network access is required when the environment is first created or repaired; then double-click **`启动题库系统.command`**.
 
-Both launchers stop only a previously recorded process whose project identity is verified. If another program owns port 8000 they exit safely, and they never open a browser after a failed health check.
+Both launchers check Python and required packages, and open an already-running MathBank service directly. Old PID/state files and Release manifests do not gate startup. Port conflicts and startup failures show the actual error and service log.
 
 ---
 
@@ -161,7 +161,7 @@ Directly using [DeepSeek Official Open Platform](https://platform.deepseek.com/)
   3. Extract the new ZIP into a **separate temporary directory**, not directly into the existing installation.
   4. **Windows:** open the extracted folder, select all of its *contents*, copy them into the existing installation, and replace every same-named file when prompted.
   5. **macOS Finder:** press `Command + Shift + .` first so hidden files such as `.env.example` are visible, then copy all *contents* of the extracted folder into the existing installation and merge same-named directories. **Do not choose Replace for the entire project folder**; Finder may remove local files that exist only in the old folder.
-  6. Double-click the new launcher. Before importing application dependencies, it verifies the Release and removes only files managed by the previous Release that no longer exist in the new one. If verification fails, startup stops; extract the ZIP again and repeat the complete content merge.
+  6. Double-click the new launcher to prepare dependencies and open MathBank. Startup no longer checks historical Release manifests or deletes old release files. If the old version is still running, stop it using the webpage power button, then launch again.
 
   Overlay upgrades preserve root databases and their WAL/SHM files, `.env`, `data_backup/`, `static/uploads/`, `.system_generated/`, and `venv/`. Never delete the existing installation and replace it with the new folder. The Windows 10/11 x64 portable package includes its complete Python and VC++ runtimes, so no separate runtime installation is required. The macOS package does not include Python, so confirm that Python 3.10 or newer is installed on the Mac before launching it. The macOS launcher automatically creates or repairs `venv`; network access is needed only when the environment is first created or when `requirements.txt` changed/dependencies are missing.
 

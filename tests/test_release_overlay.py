@@ -345,6 +345,32 @@ def test_windows_overlay_requires_launcher_helper():
     assert "scripts/windows_launcher.py" in release_overlay.REQUIRED_FILES["windows-x64"]
 
 
+def test_windows_upgrade_accepts_pre_219_installed_manifest(tmp_path):
+    obsolete = _write(tmp_path, "mathbank/obsolete.py", "old release code")
+    old = json.loads(_manifest_bytes(
+        tmp_path, "windows-x64", ["mathbank/obsolete.py"], "2.1.8"
+    ))
+    old["files"] = [
+        entry for entry in old["files"]
+        if entry["path"] != "scripts/windows_launcher.py"
+    ]
+    old_content = json.dumps(old, ensure_ascii=False).encode("utf-8")
+    state = tmp_path / release_overlay.STATE_DIRECTORY
+    state.mkdir()
+    (state / release_overlay.INSTALLED_MANIFEST_NAME).write_bytes(old_content)
+    (state / release_overlay.INSTALLED_DIGEST_NAME).write_text(
+        hashlib.sha256(old_content).hexdigest() + "\n", encoding="ascii"
+    )
+    current = _install_manifest(tmp_path, "windows-x64", [], version="2.1.9")
+
+    result = release_overlay.apply_release_overlay(tmp_path, "windows-x64")
+
+    assert result["status"] == "updated"
+    assert not obsolete.exists()
+    assert (state / release_overlay.INSTALLED_MANIFEST_NAME).read_bytes() == current
+    assert release_overlay.apply_release_overlay(tmp_path, "windows-x64")["status"] == "unchanged"
+
+
 def test_windows_overlay_rejects_manifest_without_launcher_helper(tmp_path):
     manifest = json.loads(
         _manifest_bytes(tmp_path, "windows-x64", ["main.py"], "1.0.0")

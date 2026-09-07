@@ -695,6 +695,7 @@ def assert_release_tree_clean(root, platform_name):
         "覆盖升级说明.txt",
         "mathbank/__init__.py",
         "scripts/release_overlay.py",
+        "scripts/local_launcher.py",
         "static/index.html",
         "static/uploads/.gitkeep",
     }
@@ -1083,6 +1084,7 @@ def _build_archive(staging_root, archive_stem, platform_name, launcher_name):
             "main.py",
             launcher_name,
             "scripts/release_overlay.py",
+            "scripts/local_launcher.py",
             "覆盖升级说明.txt",
         }
         if platform_name == "windows-x64":

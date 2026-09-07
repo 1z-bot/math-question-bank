@@ -211,6 +211,34 @@ def _should_preserve_inline_image_positions(content: str) -> bool:
     return bool(trailing)
 
 
+def _tikz_image_key(path: str) -> str:
+    """Match upload URL aliases without conflating files in different folders."""
+    return re.sub(r"^/?(?:static/)?uploads/", "", str(path or "").strip())
+
+
+def _inline_tikz_sources(content: str, assets: list, legacy_code: str) -> dict[str, str]:
+    sources = {}
+    for asset in assets:
+        if not isinstance(asset, dict):
+            continue
+        key = _tikz_image_key(asset.get("image_path"))
+        code = str(asset.get("tikz_code") or "").strip()
+        if key and code:
+            sources[key] = code
+
+    # Old records have one source but no explicit image/source association.
+    # Only infer it when there is exactly one distinct rendered TikZ image.
+    if not assets and legacy_code:
+        candidates = {
+            _tikz_image_key(path)
+            for path in _MARKDOWN_IMAGE_RE.findall(content)
+            if os.path.basename(path).startswith("tikz_")
+        }
+        if len(candidates) == 1:
+            sources[candidates.pop()] = legacy_code
+    return sources
+
+
 def _image_is_inside_table_environment(content: str, position: int) -> bool:
     prefix = content[:position]
     table_environments = (
@@ -331,6 +359,7 @@ def clean_content_for_latex(
     q_type: str = "",
     is_answer: bool = False,
     preserve_image_positions: bool = False,
+    tikz_sources: dict[str, str] | None = None,
 ) -> str:
     r"""
     Clean markdown/LaTeX question content for exam-zh LaTeX document export based on 试卷类模板.tex.
@@ -340,6 +369,12 @@ def clean_content_for_latex(
         return ""
     
     text = content.strip()
+    # Restore rendered TikZ only after all prose/table/choice transformations.
+    # Otherwise paragraph joining can make a '%' comment swallow drawing code.
+    tikz_blocks = {}
+    token_prefix = "MATHBANKTIKZ" + hashlib.sha256(text.encode()).hexdigest()
+    while token_prefix in text or any(token_prefix in code for code in (tikz_sources or {}).values()):
+        token_prefix += "X"
     
     # 如果是选择题，先清洗题干末尾残留的全角/半角供填答空括号，避免与右侧 \paren 生成括号重叠
     if q_type in ["single_choice", "multi_choice"] or r"\begin{choices}" in text or re.search(r'^\s*[-*]?\s*[A-D][\.、\s]', text, re.MULTILINE):
@@ -353,7 +388,28 @@ def clean_content_for_latex(
     def replace_img(match):
         img_path = match.group(1)
         base_name = os.path.basename(img_path)
-        if _image_is_inside_table_environment(text, match.start()):
+        inside_table = _image_is_inside_table_environment(text, match.start())
+        code = (tikz_sources or {}).get(_tikz_image_key(img_path))
+        if code:
+            if r"\begin{tikzpicture}" not in code:
+                code = "\\begin{tikzpicture}\n" + code + "\n\\end{tikzpicture}"
+            if inside_table:
+                rendered = (
+                    r"\adjustbox{valign=m,margin=0pt 3pt}{"
+                    r"\adjustbox{max width=\linewidth,max height=4.0cm,keepaspectratio}{"
+                    + code + "\n}}"
+                )
+            else:
+                rendered = (
+                    "\\begin{center}\n"
+                    r"\adjustbox{max width=\linewidth}{"
+                    r"\adjustbox{max width=9.0cm,max height=6.0cm,keepaspectratio}{"
+                    + code + "\n}}\n\\end{center}"
+                )
+            token = f"{token_prefix}N{len(tikz_blocks)}END"
+            tikz_blocks[token] = rendered
+            return token if inside_table else "\n" + token + "\n"
+        if inside_table:
             return (
                 r"\adjustbox{valign=m,margin=0pt 3pt}{"
                 rf"\includegraphics[max width=\linewidth,max height=4.0cm,keepaspectratio]{{{base_name}}}"
@@ -407,6 +463,8 @@ def clean_content_for_latex(
         # 题干文本处理：安全地按行首拆分与段落重组
         text = format_stem_paragraphs(text)
 
+    for token, rendered in tikz_blocks.items():
+        text = text.replace(token, rendered)
     return text
 
 def build_latex_document(
@@ -444,6 +502,21 @@ def build_latex_document(
     lines.append(r"\usepackage{array,booktabs,tabularx,longtable,multirow,makecell,diagbox,colortbl,tabularray,threeparttable}")
     lines.append(r"\UseTblrLibrary{booktabs}")
     lines.append(r"\usepackage{tkz-euclide}")
+    # Editable drawings were compiled in the workbench with these libraries.
+    # Keep them available when exporting their source instead of the preview PNG.
+    if any(
+        q.get("content_tikz_assets") or q.get("tikz_code")
+        or r"\begin{tikzpicture}" in str(q.get("content") or "")
+        for q in (item.get("question", {}) for item in questions_data)
+    ):
+        lines.append(r"\usepackage{pgfplots}")
+        lines.append(r"\pgfplotsset{compat=1.16}")
+        lines.append(
+            r"\usetikzlibrary{patterns,calc,positioning,intersections,arrows,"
+            r"shapes.geometric,through,decorations.pathmorphing,arrows.meta,quotes,"
+            r"mindmap,shapes.symbols,shapes.arrows,automata,angles,3d,trees,shadows,"
+            r"shapes.callouts,decorations.pathreplacing,decorations.markings}"
+        )
     lines.append(r"\usepackage{lastpage}")
     # Keep the first large detached figure away from the physical page edge
     # without adding another TeX package to the portable runtime contract.
@@ -637,6 +710,11 @@ def build_latex_document(
                 cleaned_raw,
                 q_type=q_type,
                 preserve_image_positions=preserve_inline_images,
+                tikz_sources=(
+                    _inline_tikz_sources(
+                        raw_content, content_tikz_assets, str(q.get("tikz_code") or "").strip()
+                    ) if preserve_inline_images else None
+                ),
             )
             env_name = "problem" if q_type == "detailed_answer" else "question"
             points_arg = f"[points = {q_score}]" if q_type == "detailed_answer" else ""

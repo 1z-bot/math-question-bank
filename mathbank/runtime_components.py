@@ -12,6 +12,7 @@ import stat
 import subprocess
 import tempfile
 import threading
+import traceback
 import urllib.error
 import urllib.request
 import uuid
@@ -29,6 +30,18 @@ PANDOC_DOWNLOAD_DIR = PANDOC_RUNTIME_DIR / "downloads"
 PANDOC_INSTALL_LOG = PANDOC_RUNTIME_DIR / "install.log"
 PANDOC_MAX_ARCHIVE_BYTES = 80 * 1024 * 1024
 PANDOC_MAX_EXTRACTED_BYTES = 320 * 1024 * 1024
+PANDOC_ACTIVE_STATUSES = {"queued", "downloading", "verifying"}
+PANDOC_STAGE_LABELS = {
+    "queued": "准备组件",
+    "checking_cache": "检查已有安装包",
+    "hashing": "校验安装包",
+    "extracting": "解压安装包",
+    "checking_binary": "验证 Pandoc 启动",
+    "checking_word": "验证 Word 可编辑公式",
+    "installing": "安装组件",
+    "checking_install": "验证安装位置",
+    "ready": "完成安装",
+}
 
 PANDOC_ASSETS: dict[str, dict[str, Any]] = {
     "windows-x86_64": {
@@ -130,8 +143,16 @@ def _pandoc_candidates() -> list[tuple[str, Path]]:
     return unique
 
 
-def _probe_pandoc(path: Path) -> str | None:
+def _process_output(value: bytes | str | None) -> str:
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    return (value or "").strip()[:2000]
+
+
+def _probe_pandoc(path: Path, *, strict: bool = False) -> str | None:
     if not path.is_file():
+        if strict:
+            raise PandocInstallError(f"Pandoc 可执行文件不存在：{path}")
         return None
     try:
         completed = subprocess.run(
@@ -141,9 +162,16 @@ def _probe_pandoc(path: Path) -> str | None:
             timeout=8,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        if strict:
+            detail = _process_output(getattr(exc, "stdout", None))
+            raise PandocInstallError(f"Pandoc 无法启动：{type(exc).__name__}: {exc} {detail}") from exc
         return None
     if completed.returncode != 0:
+        if strict:
+            raise PandocInstallError(
+                f"Pandoc 启动退出码 {completed.returncode}：{_process_output(completed.stdout)}"
+            )
         return None
     first_line = completed.stdout.decode("utf-8", errors="replace").splitlines()
     return first_line[0].strip() if first_line else "pandoc"
@@ -204,9 +232,25 @@ def _sha256(path: Path) -> str:
 
 
 def _append_install_log(message: str) -> None:
-    PANDOC_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-    with PANDOC_INSTALL_LOG.open("a", encoding="utf-8") as handle:
-        handle.write(message.rstrip() + "\n")
+    # Diagnostics must never change an installation's result or strand its task.
+    try:
+        PANDOC_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        with PANDOC_INSTALL_LOG.open("a", encoding="utf-8") as handle:
+            handle.write(message.rstrip() + "\n")
+    except OSError:
+        pass
+
+
+def _cleanup_path(path: Path, *, directory: bool = False) -> None:
+    try:
+        if directory:
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        _append_install_log(f"cleanup deferred path={path}: {type(exc).__name__}: {exc}")
 
 
 def _download(
@@ -292,12 +336,18 @@ def _safe_members(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
     return safe
 
 
-def _smoke_pandoc(binary: Path) -> None:
-    version = _probe_pandoc(binary)
-    if not version:
-        raise PandocInstallError("Pandoc 可执行文件无法启动。")
-    with tempfile.TemporaryDirectory(prefix="mathbank_pandoc_smoke_") as temp_dir:
-        temp = Path(temp_dir)
+def _smoke_pandoc(
+    binary: Path,
+    *,
+    progress: Callable[[int, str, str | None], None] | None = None,
+) -> None:
+    if progress:
+        progress(94, "checking_binary", None)
+    _probe_pandoc(binary, strict=True)
+    if progress:
+        progress(96, "checking_word", None)
+    temp = Path(tempfile.mkdtemp(prefix="mathbank_pandoc_smoke_"))
+    try:
         source = temp / "formula.md"
         output = temp / "formula.docx"
         source.write_text("$x^2+\\frac{1}{2}$\n", encoding="utf-8")
@@ -319,23 +369,43 @@ def _smoke_pandoc(binary: Path) -> None:
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
-            raise PandocInstallError("Pandoc Word 公式能力验证失败。") from exc
+            detail = _process_output(getattr(exc, "stderr", None))
+            raise PandocInstallError(
+                f"Pandoc Word 公式能力验证失败：{type(exc).__name__}: {exc} {detail}"
+            ) from exc
         if completed.returncode != 0 or not output.is_file():
-            raise PandocInstallError("Pandoc 未能生成 Word 验证文档。")
+            raise PandocInstallError(
+                f"Pandoc 未能生成 Word 验证文档（退出码 {completed.returncode}）："
+                f"{_process_output(completed.stderr)}"
+            )
         try:
             with zipfile.ZipFile(output) as docx:
                 document_xml = docx.read("word/document.xml")
         except (OSError, KeyError, zipfile.BadZipFile) as exc:
-            raise PandocInstallError("Pandoc 生成的 Word 验证文档无效。") from exc
+            raise PandocInstallError(f"Pandoc 生成的 Word 验证文档无效：{exc}") from exc
         if b"oMath" not in document_xml:
             raise PandocInstallError("Pandoc 未生成 Word 可编辑公式。")
+    finally:
+        _cleanup_path(temp, directory=True)
 
 
-def _install_pandoc(progress: Callable[[int, str, str | None], None]) -> Path:
-    key, asset = _asset_for_current_platform()
+def _verified_archive(
+    asset: dict[str, Any], progress: Callable[[int, str, str | None], None]
+) -> Path:
+    """Retain verified downloads; every reuse still checks size and SHA-256."""
     PANDOC_DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     filename = str(asset["filename"])
-    archive_path: Path | None = None
+    cached = PANDOC_DOWNLOAD_DIR / filename
+    progress(0, "checking_cache", None)
+    try:
+        if cached.is_file():
+            progress(89, "hashing", None)
+            if cached.stat().st_size == int(asset["size"]) and _sha256(cached) == asset["sha256"]:
+                _append_install_log(f"reuse verified archive={filename}")
+                return cached
+    except OSError as exc:
+        _append_install_log(f"cache verification failed: {type(exc).__name__}: {exc}")
+    _cleanup_path(cached)
     errors: list[str] = []
 
     for source_name, url in _source_urls(filename):
@@ -354,26 +424,33 @@ def _install_pandoc(progress: Callable[[int, str, str | None], None]) -> Path:
                     expected_size=int(asset["size"]),
                     progress=lambda value: progress(value, "downloading", source_name),
                 )
+                progress(89, "hashing", source_name)
                 if _sha256(candidate) != asset["sha256"]:
                     raise PandocInstallError("Pandoc 下载文件 SHA-256 校验失败。")
-                archive_path = candidate
-                break
             except (OSError, urllib.error.URLError, ValueError, PandocInstallError) as exc:
                 errors.append(f"{source_name} attempt {attempt}: {type(exc).__name__}: {exc}")
                 _append_install_log(errors[-1])
-                candidate.unlink(missing_ok=True)
-        if archive_path:
-            break
+                _cleanup_path(candidate)
+                continue
+            try:
+                os.replace(candidate, cached)
+            except OSError as exc:
+                raise PandocInstallError(f"保存已校验安装包失败：{exc}") from exc
+            finally:
+                _cleanup_path(candidate)
+            return cached
+    raise PandocInstallError(f"未能取得通过校验的 Pandoc 安装包。{errors[-1] if errors else ''}")
 
-    if not archive_path:
-        raise PandocInstallError("Pandoc 官方与备用下载线路均不可用。")
 
+def _install_pandoc(progress: Callable[[int, str, str | None], None]) -> Path:
+    key, asset = _asset_for_current_platform()
+    archive_path = _verified_archive(asset, progress)
     final_dir = PANDOC_RUNTIME_DIR / PANDOC_VERSION / key
     staging = PANDOC_RUNTIME_DIR / PANDOC_VERSION / f".{key}.{uuid.uuid4().hex}.staging"
     prepared: Path | None = None
     backup: Path | None = None
     try:
-        progress(90, "verifying", None)
+        progress(90, "extracting", None)
         staging.mkdir(parents=True, exist_ok=False)
         with zipfile.ZipFile(archive_path) as archive:
             members = _safe_members(archive)
@@ -384,7 +461,8 @@ def _install_pandoc(progress: Callable[[int, str, str | None], None]) -> Path:
         binary = binaries[0]
         if os.name != "nt":
             binary.chmod(binary.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-        _smoke_pandoc(binary)
+        _smoke_pandoc(binary, progress=progress)
+        progress(98, "installing", None)
         metadata = {
             "component": "pandoc",
             "version": PANDOC_VERSION,
@@ -401,22 +479,32 @@ def _install_pandoc(progress: Callable[[int, str, str | None], None]) -> Path:
         if final_dir.exists():
             backup = staging.parent / f".{key}.{uuid.uuid4().hex}.backup"
             os.replace(final_dir, backup)
+        published = False
         try:
             os.replace(prepared, final_dir)
-        except Exception:
-            if backup and backup.exists() and not final_dir.exists():
-                os.replace(backup, final_dir)
+            published = True
+            progress(99, "checking_install", None)
+            _probe_pandoc(final_dir / str(asset["binary"]), strict=True)
+        except Exception as exc:
+            try:
+                if published:
+                    os.replace(final_dir, prepared)
+                if backup:
+                    os.replace(backup, final_dir)
+            except OSError as rollback_error:
+                raise PandocInstallError(
+                    f"安装失败：{exc}；恢复旧组件失败：{rollback_error}。旧组件备份：{backup}"
+                ) from rollback_error
             raise
-        if backup and backup.exists():
-            shutil.rmtree(backup, ignore_errors=True)
+        if backup:
+            _cleanup_path(backup, directory=True)
         progress(100, "ready", None)
         _append_install_log(f"installed version={PANDOC_VERSION} platform={key}")
         return final_dir / str(asset["binary"])
     finally:
-        archive_path.unlink(missing_ok=True)
-        shutil.rmtree(staging, ignore_errors=True)
+        _cleanup_path(staging, directory=True)
         if prepared:
-            shutil.rmtree(prepared, ignore_errors=True)
+            _cleanup_path(prepared, directory=True)
 
 
 class PandocInstallManager:
@@ -440,12 +528,15 @@ class PandocInstallManager:
             return dict(self._state)
 
     def ensure(self) -> dict[str, Any]:
-        ready = pandoc_status()
-        if ready["available"]:
-            return {**self.snapshot(), **ready, "status": "ready", "progress": 100}
         with self._lock:
-            if self._state["status"] in {"queued", "downloading", "verifying"}:
+            if self._state["status"] in PANDOC_ACTIVE_STATUSES:
                 return dict(self._state)
+        ready = pandoc_status()
+        with self._lock:
+            if self._state["status"] in PANDOC_ACTIVE_STATUSES:
+                return dict(self._state)
+            if ready["available"]:
+                return {**self._state, **ready, "status": "ready", "progress": 100}
             task_id = uuid.uuid4().hex
             self._state = {
                 "task_id": task_id,
@@ -468,17 +559,22 @@ class PandocInstallManager:
                 source_message = "（Pandoc 官方）"
             elif source == "sourceforge":
                 source_message = "（备用线路 SourceForge）"
+            previous_stage = self._state.get("stage")
             self._state.update(
-                status=stage,
+                # Substages retain the existing API's active status contract.
+                # Only _run may publish terminal success after installation returns.
+                status="downloading" if stage == "downloading" else "verifying",
                 stage=stage,
-                progress=max(0, min(100, int(value))),
+                progress=max(0, min(99, int(value))),
                 source=source,
                 message=(
                     f"正在下载 Word 可编辑公式组件 {source_message}…"
                     if stage == "downloading"
-                    else "正在校验并安装 Word 可编辑公式组件…"
+                    else f"正在{PANDOC_STAGE_LABELS.get(stage, '校验组件')}…"
                 ),
             )
+        if previous_stage != stage:
+            _append_install_log(f"task={task_id} stage={stage}")
 
     def _run(self, task_id: str) -> None:
         try:
@@ -496,15 +592,16 @@ class PandocInstallManager:
                         error=None,
                     )
         except Exception as exc:
-            _append_install_log(f"install failed: {type(exc).__name__}: {exc}")
             with self._lock:
                 if self._state.get("task_id") == task_id:
+                    stage = self._state.get("stage")
+                    label = PANDOC_STAGE_LABELS.get(stage, "下载组件" if stage == "downloading" else "安装组件")
                     self._state.update(
                         status="error",
-                        stage="error",
-                        message="Word 可编辑公式组件安装失败。",
-                        error=str(exc),
+                        message=f"{label}失败。",
+                        error=f"{label}失败：{exc}",
                     )
+            _append_install_log(f"task={task_id} install failed:\n{traceback.format_exc()}")
 
 
 PANDOC_INSTALL_MANAGER = PandocInstallManager()

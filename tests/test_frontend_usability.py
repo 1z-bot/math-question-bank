@@ -2029,6 +2029,67 @@ def test_word_export_prepares_pandoc_once_and_can_continue_in_compatibility_mode
         assert marker in paper_source
 
 
+def test_rejoined_pandoc_install_failure_allows_retry_compatibility_and_cancel():
+    source = _read(STATIC_JS_DIR / "paper.js")
+    helpers = source[source.index("    function resetPandocInstallModal()"):
+                     source.index("    async function generateAndDownloadWord(payload)")]
+    node = shutil.which("node")
+    assert node, "Node.js is required for the frontend executable regression"
+    script = r"""
+const assert = require('node:assert/strict');
+let elements, visible, posts;
+global.window = { showToast() {} };
+global.document = { getElementById(id) { return elements.get(id); } };
+function setPandocModalVisible(value) { visible = value; }
+global.fetch = async function(url, options) {
+    if (url === '/api/runtime/pandoc/status') {
+        return { ok: true, json: async () => ({pandoc: {status: 'verifying', task_id: 'existing', progress: 96}}) };
+    }
+    if (url.endsWith('/install/existing')) {
+        return { ok: true, json: async () => ({pandoc: {status: 'error', error: 'Word validation failed', progress: 96}}) };
+    }
+    assert.equal(url, '/api/runtime/pandoc/install');
+    assert.equal(options.method, 'POST');
+    posts++;
+    return { ok: true, json: async () => ({status: 'success', pandoc: {status: 'ready'}}) };
+};
+""" + helpers + r"""
+(async () => {
+    for (const [button, expected, expectedPosts] of [
+        ['pandocInstallBtn', true, 1],
+        ['pandocCompatibilityBtn', true, 0],
+        ['pandocCancelBtn', false, 0],
+    ]) {
+        elements = new Map(); visible = false; posts = 0;
+        for (const id of ['pandocInstallProgress', 'pandocInstallError', 'pandocInstallBtn',
+            'pandocCompatibilityBtn', 'pandocCancelBtn', 'pandocInstallProgressText',
+            'pandocInstallProgressValue', 'pandocInstallProgressBar']) {
+            const classes = new Set(['hidden']);
+            elements.set(id, {disabled: false, style: {}, classList: {
+                add(v) { classes.add(v); }, remove(v) { classes.delete(v); }, contains(v) { return classes.has(v); }
+            }});
+        }
+        const result = ensurePandocForWordExport();
+        for (let i = 0; i < 20 && !elements.get(button).onclick; i++) {
+            await new Promise(resolve => setImmediate(resolve));
+        }
+        assert.equal(posts, 0, 'joining must not start another installation');
+        assert.equal(visible, true);
+        assert.equal(elements.get('pandocInstallError').textContent, 'Word validation failed');
+        assert.equal(elements.get('pandocInstallError').classList.contains('hidden'), false);
+        assert.equal(elements.get(button).disabled, false);
+        assert.equal(typeof elements.get(button).onclick, 'function', 'failed join must restore decisions');
+        elements.get(button).onclick();
+        assert.equal(await result, expected);
+        assert.equal(posts, expectedPosts);
+        assert.equal(visible, false);
+    }
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    result = subprocess.run([node, "-e", script], cwd=PROJECT_ROOT, text=True, capture_output=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+
+
 def test_generated_tailwind_classes_use_configured_scales():
     combined_source = "\n".join((_read(INDEX_PATH), *(_read(path) for path in JS_FILES)))
     assert "text-2xs" not in combined_source

@@ -493,6 +493,7 @@ def _make_minimal_windows_tree(root, *, include_launcher_helper=True):
         "覆盖升级说明.txt",
         "mathbank/__init__.py",
         "scripts/release_overlay.py",
+        "scripts/local_launcher.py",
         "static/index.html",
         "static/uploads/.gitkeep",
         "python/python.exe",
@@ -553,6 +554,7 @@ def _make_minimal_macos_tree(root):
         "覆盖升级说明.txt",
         "mathbank/__init__.py",
         "scripts/release_overlay.py",
+        "scripts/local_launcher.py",
         "static/index.html",
         "static/uploads/.gitkeep",
         "启动题库系统.command",
@@ -887,86 +889,27 @@ def test_static_release_allowlist_excludes_uploads_and_test_assets():
     assert build_release._release_path_violation("data_backup/custom_metadata.json")
 
 
-def test_launchers_require_python_310_and_only_stop_verified_mathbank_processes():
-    mac_launcher = (PROJECT_ROOT / "启动题库系统.command").read_text(encoding="utf-8")
-    windows_launcher = (PROJECT_ROOT / "启动题库系统.bat").read_text(
-        encoding="utf-8"
-    )
-    windows_helper = (PROJECT_ROOT / "scripts" / "windows_launcher.py").read_text(
-        encoding="utf-8"
-    )
-
-    assert "--reload" not in mac_launcher
-    assert "kill -9" not in mac_launcher
-    assert "server.identity" in mac_launcher
-    assert "is_owned_server" in mac_launcher
-    assert "find_supported_python" in mac_launcher
-    assert "python3.14 python3.13 python3.12 python3.11 python3.10" in mac_launcher
-    assert "venv-python-legacy" in mac_launcher
-    assert "find_verified_mathbank_owner" in mac_launcher
-    assert "is_mathbank_project_root" in mac_launcher
-    assert "process_executable" in mac_launcher
-    assert "expected_python_executable" in mac_launcher
-    assert 'Path(sys.base_prefix) / "Resources" / "Python.app"' in mac_launcher
-    assert 'case " $inspected_command "' in mac_launcher
-    assert 'rechecked_owner=$(find_verified_mathbank_owner "$verified_owner")' in mac_launcher
-    assert "另一份或旧版 MathBank 仍在运行" in mac_launcher
-    assert "无法确认身份的进程" in mac_launcher
-    assert "sys.version_info >= (3, 10)" in mac_launcher
-    assert "浏览器不会打开" in mac_launcher
-    assert "requirements.sha256" in mac_launcher
-    assert "hashlib.sha256" in mac_launcher
-    assert "-m pip check" in mac_launcher
-    assert "import pymupdf as fitz" in mac_launcher
-    assert ", fitz," not in mac_launcher
-    assert "/healthz" in mac_launcher
-    assert "/api/questions" not in mac_launcher
-    assert "ProxyHandler({})" in mac_launcher
-    assert "deadline = time.monotonic() + 60.0" in mac_launcher
-    assert "min(2.0, remaining)" in mac_launcher
-    assert "time.sleep(min(0.5, remaining))" in mac_launcher
-    assert "-u -m uvicorn main:app" in mac_launcher
-    assert "probe.log" in mac_launcher
-    assert "-B -m scripts.release_overlay --platform macos" in mac_launcher
-    assert mac_launcher.index("stop_previous_owned_server ||") < mac_launcher.index(
-        "stop_verified_legacy_mathbank_listeners\n"
-    ) < mac_launcher.index(
-        "LEGACY_VENV_BACKUP=\"\""
-    ) < mac_launcher.index(
-        "-B -m scripts.release_overlay --platform macos"
-    ) < mac_launcher.index("正在检查运行环境依赖是否完整")
-
-    assert "--reload" not in windows_launcher
-    assert "taskkill" not in windows_launcher.lower()
-    assert "-B -m scripts.windows_launcher %*" in windows_launcher
-    assert "MATHBANK_NO_PAUSE" in windows_launcher
-    assert "sys.version_info >= (3,10)" in windows_launcher
-    assert "msvcp140.dll" in windows_launcher
-    assert "python\\%%d" in windows_launcher
-    assert "/api/questions" not in windows_launcher
-    assert "Stop-Process" not in windows_helper
-    assert "taskkill" not in windows_helper.lower()
-    assert "from mathbank" not in windows_helper
-    assert "Path(__file__).resolve().parents[1]" in windows_helper
-    assert "server-state.json" in windows_helper
-    assert "creation_ticks" in windows_helper
-    assert "os.replace" in windows_helper
-    assert "launcher.lock" in windows_helper
-    assert "runtime.lock" in windows_helper
-    assert "stale-launcher-state-" in windows_helper
-    assert "scripts.release_overlay" in windows_helper
-    assert "requirements.sha256" in windows_helper
-    assert "pip\", \"check" in windows_helper
-    assert "ctypes.WinDLL" in windows_helper
-    assert "pymupdf as fitz" in windows_helper
-    assert "ProxyHandler({})" in windows_helper
-    assert "http://127.0.0.1:{PORT}/healthz" in windows_helper
-    assert "http://127.0.0.1:{PORT}/api/shutdown" in windows_helper
-    assert "X-Local-Token" in windows_helper
-    assert "X-MathBank-Launch-ID" in windows_helper
-    assert "MATHBANK_LAUNCH_ID" in windows_helper
-    assert "child.terminate()" not in windows_helper
-    assert "Stop-Process" not in windows_helper
+def test_launchers_use_shared_environment_and_startup_flow():
+    mac = (PROJECT_ROOT / "启动题库系统.command").read_text(encoding="utf-8")
+    windows = (PROJECT_ROOT / "启动题库系统.bat").read_text(encoding="utf-8")
+    shared = (PROJECT_ROOT / "scripts/local_launcher.py").read_text(encoding="utf-8")
+    assert "scripts.local_launcher" in mac
+    assert "scripts.windows_launcher" in windows
+    assert "sys.version_info >= (3, 10)" in mac
+    assert "find_supported_python" in mac
+    assert "MATHBANK_NO_PAUSE" in windows
+    assert "MATHBANK_NO_PAUSE" in mac
+    assert "Path(__file__).resolve().parents[1]" in shared
+    assert "ProxyHandler({})" in shared
+    assert "MATHBANK_LAUNCH_ID" in shared
+    for source in (mac, windows, shared):
+        assert "--reload" not in source
+        assert "taskkill" not in source.lower()
+        assert "Get-CimInstance" not in source
+        assert "scripts.release_overlay" not in source
+    assert "creation_ticks" not in shared
+    assert "requirements.sha256" in shared
+    assert "pymupdf as fitz" in shared
 
 
 def test_release_builder_uses_invoking_interpreter_for_pip():
@@ -984,8 +927,8 @@ def test_windows_ci_builds_and_import_smokes_embedded_runtime():
     assert "download_and_extract_msvc_runtime()" in workflow
     assert "validate_windows_runtime(b.BUILD_DIR)" in workflow
     assert "b.zip_release()" in workflow
-    assert "--self-test-stale-state" in workflow
-    assert "Start, health-check, and restart the packaged Windows service" in workflow
+    assert "invalid old state" in workflow
+    assert "Start and reopen the packaged Windows service" in workflow
     assert "server_instance_id" in workflow
     assert "X-MathBank-Launch-ID" in workflow
     assert "tests/test_windows_launcher.py" in workflow

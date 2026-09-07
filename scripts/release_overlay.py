@@ -129,7 +129,7 @@ def _read_regular(path, label):
         raise ReleaseOverlayError(f"cannot read {label}") from exc
 
 
-def _load_manifest(path, platform, label):
+def _load_manifest(path, platform, label, *, current_release=True):
     content = _read_regular(path, label)
     try:
         manifest = json.loads(content.decode("utf-8"))
@@ -191,10 +191,13 @@ def _load_manifest(path, platform, label):
         _require(name.casefold() not in folded_names, f"{label} has a duplicate path")
         folded_names.add(name.casefold())
         entries[name] = (size, expected_hash)
-    _require(
-        REQUIRED_FILES[platform].issubset(entries),
-        f"{label} omits a required application file",
-    )
+    # Installed manifests describe historical releases. New required files may
+    # not have existed then; only the incoming release must supply them.
+    if current_release:
+        _require(
+            REQUIRED_FILES[platform].issubset(entries),
+            f"{label} omits a required application file",
+        )
     return content, entries, protected
 
 
@@ -444,7 +447,7 @@ def _apply_locked(root, platform, state):
         if _read_digest(state) != installed_digest:
             raise ReleaseOverlayError("installed release manifest digest does not match")
         _, old_entries, old_protected = _load_manifest(
-            installed_path, platform, "installed release manifest"
+            installed_path, platform, "installed release manifest", current_release=False
         )
         previous = (old_entries, old_protected)
 

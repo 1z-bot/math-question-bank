@@ -44,6 +44,26 @@ jobs:
             node --check "$script"
           done
 
+  pandoc-native:
+    name: Native Pandoc installation / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-2022]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install isolated test runner
+        run: python -m pip install --disable-pip-version-check pytest==9.0.3
+      - name: Verify real download, Unicode paths, OMML and cached reinstallation
+        env:
+          MATHBANK_TEST_PANDOC_NATIVE: "1"
+        run: python -m pytest --noconftest tests/test_runtime_components.py
+
   release-guards:
     name: Release guards / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -65,103 +85,7 @@ jobs:
         shell: pwsh
         run: |
           python -c "from scripts import build_release as b; b.clean_directories(); b.download_python(); b.download_and_extract_sqlite(); b.download_and_extract_msvc_runtime(); b.configure_python_path(); b.download_and_extract_wheels(); b.copy_app_files(b.BUILD_DIR, b.WINDOWS_LAUNCHER_NAME); b.create_launcher(); b.validate_windows_runtime(b.BUILD_DIR); b.zip_release()"
-      - name: Run the packaged BAT stale-state regression in a Unicode path
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $archive = Join-Path $PWD 'dist\MathBank-Windows-x64.zip'
-          if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
-            throw "Missing packaged Windows archive: $archive"
-          }
-
-          $testRoot = Join-Path $env:RUNNER_TEMP (
-            'MathBank 中文 空格 回归-' + [Guid]::NewGuid().ToString('N')
-          )
-          New-Item -ItemType Directory -Path $testRoot | Out-Null
-          Expand-Archive -LiteralPath $archive -DestinationPath $testRoot
-
-          $sleeper = Start-Process `
-            -FilePath "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" `
-            -ArgumentList @(
-              '-NoLogo',
-              '-NoProfile',
-              '-NonInteractive',
-              '-Command',
-              'Start-Sleep -Seconds 300'
-            ) `
-            -PassThru
-          try {
-            $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($sleeper.Id)"
-            if ($null -eq $process) {
-              throw 'The harmless sleeper process was not available to CIM.'
-            }
-            $actualCreationTicks = $process.CreationDate.ToUniversalTime().Ticks
-
-            $stateDirectory = Join-Path $testRoot '.system_generated'
-            New-Item -ItemType Directory -Path $stateDirectory | Out-Null
-            $statePath = Join-Path $stateDirectory 'server-state.json'
-            $state = [ordered]@{
-              schema = 1
-              pid = $sleeper.Id
-              creation_ticks = $actualCreationTicks + [Int64]10000000
-              root = $testRoot
-              executable = (Join-Path $testRoot 'python\python.exe')
-              command = @(
-                (Join-Path $testRoot 'python\python.exe'),
-                '-u', '-m', 'uvicorn', 'main:app',
-                '--host', '127.0.0.1', '--port', '8000'
-              )
-              launch_id = [Guid]::NewGuid().ToString('N')
-            }
-            $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
-            [IO.File]::WriteAllText(
-              $statePath,
-              ($state | ConvertTo-Json -Depth 4),
-              $utf8WithoutBom
-            )
-
-            $launcher = Join-Path $testRoot '启动题库系统.bat'
-            $env:MATHBANK_NO_PAUSE = '1'
-            $output = & $env:ComSpec /d /s /c `
-              ('""{0}" --self-test-stale-state"' -f $launcher) 2>&1 | Out-String
-            $launcherExitCode = $LASTEXITCODE
-            Write-Host $output
-
-            if ($launcherExitCode -ne 0) {
-              throw "Packaged BAT stale-state regression failed with exit code $launcherExitCode."
-            }
-            if ($output.Contains("��")) {
-              throw 'Packaged BAT output contains Unicode replacement characters.'
-            }
-            if ($output -match '(?i)is not recognized as an internal or external command') {
-              throw 'cmd.exe parsed part of the packaged BAT output as a command.'
-            }
-
-            $sleeper.Refresh()
-            if ($sleeper.HasExited) {
-              throw 'The launcher terminated the unrelated sleeper process.'
-            }
-            if (Test-Path -LiteralPath $statePath) {
-              throw 'The proven-stale state was not isolated.'
-            }
-            $isolatedStates = @(
-              Get-ChildItem -LiteralPath $stateDirectory `
-                -Filter 'stale-launcher-state-*.json' `
-                -File
-            )
-            if ($isolatedStates.Count -ne 1) {
-              throw "Expected one isolated stale state, found $($isolatedStates.Count)."
-            }
-          }
-          finally {
-            $sleeper.Refresh()
-            if (-not $sleeper.HasExited) {
-              $sleeper.Kill()
-              $sleeper.WaitForExit()
-            }
-          }
-      - name: Start, health-check, and restart the packaged Windows service
+      - name: Start and reopen the packaged Windows service
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -176,6 +100,14 @@ jobs:
           $statePath = Join-Path $testRoot '.system_generated\server-state.json'
           $env:MATHBANK_NO_PAUSE = '1'
           $env:MATHBANK_NO_BROWSER = '1'
+          $stateDirectory = Join-Path $testRoot '.system_generated'
+          New-Item -ItemType Directory -Path $stateDirectory | Out-Null
+          Set-Content -LiteralPath $statePath -Value 'invalid old state'
+          Set-Content -LiteralPath (Join-Path $stateDirectory 'installed-release-manifest.json') `
+            -Value 'invalid historical manifest'
+          $sleeper = Start-Process -FilePath "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" `
+            -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep -Seconds 300') -PassThru
+          Set-Content -LiteralPath (Join-Path $stateDirectory 'server.pid') -Value $sleeper.Id
 
           function Invoke-PackagedLauncher {
             $output = & $env:ComSpec /d /s /c ('""{0}""' -f $launcher) `
@@ -202,14 +134,12 @@ jobs:
 
             Invoke-PackagedLauncher
             $second = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
-            if ([int]$second.pid -eq [int]$first.pid) {
-              throw 'The packaged restart did not create a new process instance.'
+            if ([string]$second.launch_id -ne [string]$first.launch_id) {
+              throw 'A repeated double click replaced the existing service.'
             }
-            if ($null -ne (Get-Process -Id ([int]$first.pid) -ErrorAction SilentlyContinue)) {
-              throw 'The first packaged service did not exit cooperatively.'
-            }
-            if ($null -eq (Get-Process -Id ([int]$second.pid) -ErrorAction SilentlyContinue)) {
-              throw 'The restarted packaged service is not running.'
+            $sleeper.Refresh()
+            if ($sleeper.HasExited) {
+              throw 'The launcher stopped an unrelated process from an old PID file.'
             }
 
             $request = [Net.HttpWebRequest]::Create('http://127.0.0.1:8000/healthz')
@@ -225,6 +155,11 @@ jobs:
             }
           }
           finally {
+            $sleeper.Refresh()
+            if (-not $sleeper.HasExited) {
+              $sleeper.Kill()
+              $sleeper.WaitForExit()
+            }
             if (Test-Path -LiteralPath $statePath -PathType Leaf) {
               try {
                 $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json

@@ -2719,7 +2719,7 @@
         const compatibility = document.getElementById('pandocCompatibilityBtn');
         const cancel = document.getElementById('pandocCancelBtn');
         if (error) {
-            error.textContent = message || 'Word 可编辑公式组件安装失败，尚未修改现有运行环境。';
+            error.textContent = message || 'Word 可编辑公式组件安装失败，可重试或选择本次兼容导出。';
             error.classList.remove('hidden');
         }
         if (install) {
@@ -2765,16 +2765,22 @@
         throw new Error('Pandoc 安装等待超时，请重试。');
     }
 
-    async function installPandocAndContinue() {
+    async function installPandocAndContinue(existingTaskId = null) {
         while (true) {
             try {
-                updatePandocInstallProgress({ progress: 0, message: '正在准备下载…' });
-                const response = await fetch('/api/runtime/pandoc/install', { method: 'POST' });
-                const data = await response.json();
-                if (!response.ok || data.status !== 'success') {
-                    throw new Error(data.message || 'Pandoc 安装任务创建失败。');
+                let state;
+                if (existingTaskId) {
+                    state = { task_id: existingTaskId };
+                    existingTaskId = null;
+                } else {
+                    updatePandocInstallProgress({ progress: 0, message: '正在准备安装…' });
+                    const response = await fetch('/api/runtime/pandoc/install', { method: 'POST' });
+                    const data = await response.json();
+                    if (!response.ok || data.status !== 'success') {
+                        throw new Error(data.message || 'Pandoc 安装任务创建失败。');
+                    }
+                    state = data.pandoc || {};
                 }
-                const state = data.pandoc || {};
                 if (state.status !== 'ready') {
                     if (!state.task_id) throw new Error('Pandoc 安装任务缺少标识。');
                     await pollPandocInstall(state.task_id);
@@ -2811,9 +2817,7 @@
                 resetPandocInstallModal();
                 setPandocModalVisible(true);
                 updatePandocInstallProgress(state);
-                await pollPandocInstall(state.task_id);
-                setPandocModalVisible(false);
-                return true;
+                return await installPandocAndContinue(state.task_id);
             }
             if (state.status === 'unsupported') {
                 if (window.showToast) window.showToast('当前系统暂不支持自动安装 Pandoc，可使用兼容模式导出', 'warning');
