@@ -110,6 +110,9 @@ jobs:
           Set-Content -LiteralPath (Join-Path $stateDirectory 'server.pid') -Value $sleeper.Id
 
           function Invoke-PackagedLauncher {
+            # cmd.exe /s /c expects its own nested quoting, not PowerShell 7's
+            # standard native-argument escaping for an .exe target.
+            $PSNativeCommandArgumentPassing = 'Legacy'
             $output = & $env:ComSpec /d /s /c ('""{0}""' -f $launcher) `
               2>&1 | Out-String
             $exitCode = $LASTEXITCODE
