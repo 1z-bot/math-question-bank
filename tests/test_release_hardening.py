@@ -323,7 +323,8 @@ def test_embedded_python_path_includes_application_root(tmp_path, monkeypatch):
     ]
 
 
-def test_windows_runtime_rejects_missing_application_root(tmp_path):
+@pytest.mark.parametrize("include_app_root", [False, True])
+def test_windows_runtime_application_root_and_cache_safety(tmp_path, monkeypatch, include_app_root):
     required_paths = (
         "python/python.exe",
         "python/_sqlite3.pyd",
@@ -346,12 +347,33 @@ def test_windows_runtime_rejects_missing_application_root(tmp_path):
         else:
             path.mkdir()
     (tmp_path / "python" / "python310._pth").write_text(
-        "python310.zip\n.\nsite-packages\nimport site\n",
+        "python310.zip\n.\n" + ("..\n" if include_app_root else "") + "site-packages\nimport site\n",
         encoding="utf-8",
     )
 
-    with pytest.raises(RuntimeError, match="cannot import the application root"):
+    if not include_app_root:
+        with pytest.raises(RuntimeError, match="cannot import the application root"):
+            build_release.validate_windows_runtime(tmp_path)
+        return
+
+    from types import SimpleNamespace
+
+    calls = []
+    real_check_call = subprocess.check_call
+    (tmp_path / "cache_probe.py").write_text("value = 1\n", encoding="utf-8")
+
+    def run_cache_probe(command, *, cwd):
+        calls.append(command)
+        # Execute the smoke command's interpreter flags with a portable import.
+        real_check_call([sys.executable, *command[1:-1], "import cache_probe"], cwd=cwd)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(build_release, "os", SimpleNamespace(name="nt"))
+        patch.setattr(build_release.subprocess, "check_call", run_cache_probe)
         build_release.validate_windows_runtime(tmp_path)
+    assert len(calls) == 1
+    assert not list(tmp_path.rglob("*.pyc"))
+    assert not list(tmp_path.rglob("__pycache__"))
 
 
 def test_windows_launcher_builder_forces_crlf_on_every_host(tmp_path, monkeypatch):

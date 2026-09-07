@@ -859,6 +859,7 @@ def validate_windows_runtime(root):
         subprocess.check_call(
             [
                 str(python_executable),
+                "-B",  # Smoke imports must not dirty the release staging tree.
                 "-c",
                 smoke_code,
             ],
