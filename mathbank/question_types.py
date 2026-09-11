@@ -1,6 +1,46 @@
-"""Pure helpers for conservative single-question type detection."""
+"""Pure helpers for question form detection and paper type grouping."""
 
 import re
+
+
+PAPER_TYPE_ORDER = ("single_choice", "multi_choice", "fill_in_blank", "detailed_answer")
+
+
+def normalize_section_order(value) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return list(dict.fromkeys(item for item in value if isinstance(item, str) and item))
+
+
+def paper_type_order(present_types, paper_type: str, question_types=None, section_order=None) -> list[str]:
+    """Use saved section order, appending any types that were added afterwards."""
+    order = list(PAPER_TYPE_ORDER)
+    if paper_type == "exam_19":
+        return order
+    present = list(dict.fromkeys(present_types))
+    for item in question_types or []:
+        value = item.get("value") if isinstance(item, dict) else None
+        if isinstance(value, str) and value in present and value not in order:
+            order.append(value)
+    order.extend(value for value in present if value not in order)
+    preferred = normalize_section_order(section_order)
+    return preferred + [value for value in order if value not in preferred]
+
+
+def custom_type_labels(question_types=None) -> dict[str, str]:
+    """Custom labels are plain text; each output format must escape them itself."""
+    labels = {}
+    for item in question_types or []:
+        if not isinstance(item, dict):
+            continue
+        value, label = item.get("value"), item.get("label")
+        if isinstance(value, str) and isinstance(label, str) and label.strip():
+            labels.setdefault(value, label)
+    return labels
+
+
+def is_written_question_type(q_type: str) -> bool:
+    return q_type not in ("single_choice", "multi_choice", "fill_in_blank")
 
 
 QUESTION_FORM_CHOICE = "choice"

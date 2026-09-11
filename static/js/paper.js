@@ -20,6 +20,7 @@
             title: '2026年高中数学模拟考试试卷',
             subtitle: '',
             paper_type: 'exam_19',
+            section_order: [],
             solution_space_default: '7.0',
             show_notice: true,
             show_secret: true
@@ -400,11 +401,14 @@
     const paperActionInFlight = new Set();
 
     function getPaperCartSignature() {
-        return JSON.stringify(window.PaperStore.cart.map(item => [
+        return JSON.stringify({
+            paper_type: (window.PaperStore.meta || {}).paper_type,
+            section_order: normalizeSectionOrder((window.PaperStore.meta || {}).section_order),
+            questions: window.PaperStore.cart.map(item => [
             parseInt(item.id, 10) || 0,
             parseInt(item.score, 10) || 0,
             item.solution_space === undefined ? null : String(item.solution_space)
-        ]));
+        ])});
     }
 
     function beginPaperAction(actionKey, actionLabel) {
@@ -1852,8 +1856,7 @@
 
         const cartItemsWithIndex = validCart.map((item, idx) => ({ ...item, cartIndex: idx }));
 
-        const typeOrder = ['single_choice', 'multi_choice', 'fill_in_blank', 'detailed_answer'];
-        const grouped = {};
+        const grouped = Object.create(null);
 
         cartItemsWithIndex.forEach(item => {
             const q = window.PaperStore.questionsMap[item.id];
@@ -1863,13 +1866,15 @@
             grouped[qType].push(item);
         });
 
+        const presentTypes = cartItemsWithIndex.map(item => window.PaperStore.questionsMap[item.id].question_type || 'single_choice');
+        const typeOrder = getPaperTypeOrder(presentTypes, meta.paper_type, meta.section_order).filter(type => grouped[type] && grouped[type].length);
         const blocks = [];
         const secNums = ['一', '二', '三', '四', '五'];
         let secIdx = 0;
         const isExam19 = (meta.paper_type === 'exam_19');
         let globalQIndex = 1;
 
-        typeOrder.forEach(qType => {
+        typeOrder.forEach((qType, sectionIndex) => {
             const items = grouped[qType];
             if (!items || items.length === 0) return;
 
@@ -1884,6 +1889,9 @@
             const secNum = secNums[secIdx] || (secIdx + 1);
             secIdx++;
 
+            const writtenType = isWrittenQuestionType(qType);
+            const typeLabel = escapeHtml(getQuestionTypeCn(qType));
+            const safeType = escapeHtml(qType);
             const count = items.length;
             const secScore = items.reduce((s, it) => s + (parseInt(it.score, 10) || 5), 0);
             const unitScore = items[0] ? (parseInt(items[0].score, 10) || 5) : 5;
@@ -1897,7 +1905,7 @@
                 } else if (qType === 'fill_in_blank') {
                     secHeaderText = `${secNum}、填空题`;
                 } else {
-                    secHeaderText = `${secNum}、解答题`;
+                    secHeaderText = `${secNum}、${qType === 'detailed_answer' ? '解答题' : typeLabel}`;
                 }
             } else {
                 if (qType === 'single_choice') {
@@ -1907,7 +1915,7 @@
                 } else if (qType === 'fill_in_blank') {
                     secHeaderText = `${secNum}、填空题：本题共 ${count} 小题，每小题 ${unitScore} 分，共 ${secScore} 分。`;
                 } else {
-                    secHeaderText = `${secNum}、解答题：本题共 ${count} 小题，共 ${secScore} 分。解答应写出文字说明、证明过程或演算步骤。`;
+                    secHeaderText = `${secNum}、${qType === 'detailed_answer' ? '解答题' : typeLabel}：本题共 ${count} 小题，共 ${secScore} 分。解答应写出文字说明、证明过程或演算步骤。`;
                 }
             }
 
@@ -1915,11 +1923,18 @@
                 type: 'section_title',
                 qType: qType,
                 html: `
-                    <div class="paper-sec-block mb-3" data-qtype="${qType}">
-                        <h3 class="font-bold text-[13.5px] font-serif mt-2 mb-2 text-slate-900 leading-snug">${secHeaderText}</h3>
+                    <div class="paper-sec-block mb-3 flex items-start gap-3" data-qtype="${safeType}">
+                        <h3 class="flex-1 min-w-0 font-bold text-[13.5px] font-serif mt-2 mb-2 text-slate-900 leading-snug">${secHeaderText}</h3>
+                        ${isExam19 ? '' : `
+                        <div class="paper-section-controls flex shrink-0 gap-1 print:hidden" aria-label="${typeLabel}大题排序">
+                            <button type="button" data-section-move="up" onclick="window.movePaperSection(this.closest('[data-qtype]').dataset.qtype, 'up')" ${sectionIndex === 0 ? 'disabled' : ''}
+                                class="min-h-[44px] min-w-[44px] px-2 rounded-lg text-xs font-sans text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-default" aria-label="上移${typeLabel}大题" title="上移整个大题">↑ 上移</button>
+                            <button type="button" data-section-move="down" onclick="window.movePaperSection(this.closest('[data-qtype]').dataset.qtype, 'down')" ${sectionIndex === typeOrder.length - 1 ? 'disabled' : ''}
+                                class="min-h-[44px] min-w-[44px] px-2 rounded-lg text-xs font-sans text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-default" aria-label="下移${typeLabel}大题" title="下移整个大题">↓ 下移</button>
+                        </div>`}
                     </div>
                 `,
-                estHeight: 40
+                estHeight: isExam19 ? 40 : Math.max(56, Math.ceil(secHeaderText.length / 38) * 20 + 16)
             });
 
             items.forEach((item, subIdx) => {
@@ -1933,7 +1948,7 @@
                 let solSpaceCm = 0;
                 let isSolSpaceEmbedded = false;
 
-                if (qType === 'detailed_answer') {
+                if (writtenType) {
                     const defaultFallback = meta.paper_type === 'exam_19' ? '0.0' : '7.0';
                     const defaultSpace = parseFloat(meta.solution_space_default !== undefined ? meta.solution_space_default : defaultFallback);
                     solSpaceCm = parseFloat(item.solution_space !== undefined ? item.solution_space : defaultSpace);
@@ -1991,7 +2006,7 @@
                 }
 
                 let solutionBlankHtml = '';
-                if (qType === 'detailed_answer') {
+                if (writtenType) {
                     const spacePx = Math.round(solSpaceCm * 35);
                     const isZero = solSpaceCm <= 0;
 
@@ -2037,7 +2052,7 @@
                             </div>
                             <div class="absolute inset-0 flex items-center justify-center pointer-events-none ${isZero ? 'opacity-0 group-hover/blank:opacity-70' : 'opacity-40 group-hover/blank:opacity-80'} transition-opacity">
                                 <span class="text-[10px] font-sans text-sky-700 font-medium tracking-wider select-none">
-                                    <i class="fa-solid fa-pen-ruler mr-1"></i> 解答题留白区域 (${solSpaceCm.toFixed(1)} cm)
+                                    <i class="fa-solid fa-pen-ruler mr-1"></i> ${typeLabel}留白区域 (${solSpaceCm.toFixed(1)} cm)
                                 </span>
                             </div>
                         </div>
@@ -2048,9 +2063,9 @@
                     <div class="paper-q-item group relative text-[13px] leading-normal font-serif p-2 rounded-xl border border-transparent hover:border-brand-200 hover:bg-brand-50/30 transition-all duration-200 cursor-grab active:cursor-grabbing mb-2"
                         draggable="true"
                         data-qid="${q ? q.id : ''}"
-                        data-qtype="${qType}"
+                        data-qtype="${safeType}"
                         data-sub-index="${subIdx}"
-                        ondragstart="onPaperCanvasDragStart(event, ${q ? q.id : 0}, ${subIdx}, '${qType}')"
+                        ondragstart="onPaperCanvasDragStart(event, ${q ? q.id : 0}, ${subIdx}, this.dataset.qtype)"
                         ondragover="onPaperCanvasDragOver(event)"
                         ondragenter="onPaperCanvasDragEnter(event)"
                         ondragleave="onPaperCanvasDragLeave(event)"
@@ -2060,10 +2075,10 @@
                         <!-- Hover Action Bar: Drag Handle & Quick Move/Remove Buttons -->
                         <div class="paper-canvas-toolbar absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-[10px] font-sans select-none z-10">
                             <span class="toolbar-label font-medium mr-0.5"><i class="fa-solid fa-grip-vertical"></i> 按住拖拽排序</span>
-                            <button onclick="event.stopPropagation(); window.movePaperQuestionWithinType('${qType}', ${subIdx}, 'up')" ${subIdx === 0 ? 'disabled' : ''} class="toolbar-btn p-0.5 disabled:opacity-30" title="上移">
+                            <button onclick="event.stopPropagation(); window.movePaperQuestionWithinType(this.closest('[data-qtype]').dataset.qtype, ${subIdx}, 'up')" ${subIdx === 0 ? 'disabled' : ''} class="toolbar-btn p-0.5 disabled:opacity-30" title="上移">
                                 <i class="fa-solid fa-chevron-up"></i>
                             </button>
-                            <button onclick="event.stopPropagation(); window.movePaperQuestionWithinType('${qType}', ${subIdx}, 'down')" ${subIdx === items.length - 1 ? 'disabled' : ''} class="toolbar-btn p-0.5 disabled:opacity-30" title="下移">
+                            <button onclick="event.stopPropagation(); window.movePaperQuestionWithinType(this.closest('[data-qtype]').dataset.qtype, ${subIdx}, 'down')" ${subIdx === items.length - 1 ? 'disabled' : ''} class="toolbar-btn p-0.5 disabled:opacity-30" title="下移">
                                 <i class="fa-solid fa-chevron-down"></i>
                             </button>
                             <button onclick="event.stopPropagation(); window.removeFromCart(${q ? q.id : 0})" class="toolbar-btn p-0.5 hover:text-rose-500" title="移出试卷">
@@ -2082,7 +2097,7 @@
                 `;
 
                 let estH = 75;
-                if (qType === 'detailed_answer') {
+                if (writtenType) {
                     const solutionHeight = isSolSpaceEmbedded
                         ? Math.max(Math.round(solSpaceCm * 35), figureMetrics.blockHeight, 180)
                         : Math.round(solSpaceCm * 35);
@@ -2154,6 +2169,39 @@
 
         return pagesHtml;
     }
+
+    window.movePaperSection = function (qType, direction) {
+        const store = window.PaperStore;
+        if (store.meta.paper_type === 'exam_19' || !['up', 'down'].includes(direction)) return;
+        const present = store.cart.map(item => store.questionsMap[item.id])
+            .filter(q => q && q.content && q.content.trim())
+            .map(q => q.question_type || 'single_choice');
+        const order = getPaperTypeOrder(present, store.meta.paper_type, store.meta.section_order);
+        const visible = order.filter(type => present.includes(type));
+        const index = visible.indexOf(qType);
+        const targetIndex = index + (direction === 'up' ? -1 : 1);
+        if (index < 0 || targetIndex < 0 || targetIndex >= visible.length) return;
+        const from = order.indexOf(qType);
+        order.splice(from, 1);
+        const to = order.indexOf(visible[targetIndex]);
+        order.splice(direction === 'up' ? to : to + 1, 0, qType);
+        store.meta.section_order = order;
+        saveMetaToStorage();
+        window.renderPaperCanvas();
+        const focusSection = () => {
+            const section = Array.from(document.querySelectorAll('.paper-sec-block'))
+                .find(element => element.dataset.qtype === qType);
+            if (!section) return;
+            section.scrollIntoView({ block: 'nearest' });
+            const buttons = Array.from(section.querySelectorAll('[data-section-move]'));
+            const button = buttons.find(item => item.dataset.sectionMove === direction && !item.disabled)
+                || buttons.find(item => !item.disabled);
+            if (button) button.focus({ preventScroll: true });
+        };
+        // Follow the moved heading after the canvas has restored its scroll position.
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(focusSection);
+        else focusSection();
+    };
 
     // Reorder Items strictly within the same Question Type section
     function reorderItemsWithinType(cart, qType, fromSubIdx, toSubIdx) {
@@ -2464,6 +2512,7 @@
                 title: window.PaperStore.meta.title,
                 subtitle: window.PaperStore.meta.subtitle,
                 paper_type: window.PaperStore.meta.paper_type,
+                section_order: normalizeSectionOrder(window.PaperStore.meta.section_order),
                 show_notice: window.PaperStore.meta.show_notice !== false,
                 show_secret: window.PaperStore.meta.show_secret !== false,
                 target: target,
@@ -2924,6 +2973,7 @@
                 title: window.PaperStore.meta.title,
                 subtitle: window.PaperStore.meta.subtitle,
                 paper_type: window.PaperStore.meta.paper_type,
+                section_order: normalizeSectionOrder(window.PaperStore.meta.section_order),
                 show_notice: window.PaperStore.meta.show_notice !== false,
                 show_secret: window.PaperStore.meta.show_secret !== false,
                 questions: buildCartQuestionsPayload()
@@ -2954,6 +3004,7 @@
                 title: window.PaperStore.meta.title,
                 subtitle: window.PaperStore.meta.subtitle,
                 paper_type: window.PaperStore.meta.paper_type,
+                section_order: normalizeSectionOrder(window.PaperStore.meta.section_order),
                 show_notice: window.PaperStore.meta.show_notice !== false,
                 show_secret: window.PaperStore.meta.show_secret !== false,
                 questions: cartQuestions
@@ -3024,6 +3075,7 @@
                 title: window.PaperStore.meta.title,
                 subtitle: window.PaperStore.meta.subtitle,
                 paper_type: window.PaperStore.meta.paper_type,
+                section_order: normalizeSectionOrder(window.PaperStore.meta.section_order),
                 show_notice: window.PaperStore.meta.show_notice !== false,
                 show_secret: window.PaperStore.meta.show_secret !== false,
                 questions: cart
@@ -3196,6 +3248,7 @@
                 window.PaperStore.meta.title = paper.title || '未命名试卷';
                 window.PaperStore.meta.subtitle = paper.subtitle || '';
                 window.PaperStore.meta.paper_type = paper.paper_type || 'exam';
+                window.PaperStore.meta.section_order = normalizeSectionOrder(paper.section_order);
                 window.PaperStore.meta.show_notice = paper.show_notice !== false;
                 window.PaperStore.meta.show_secret = paper.show_secret !== false;
 
@@ -3283,6 +3336,7 @@
                         title: paper.title,
                         subtitle: paper.subtitle,
                         paper_type: paper.paper_type,
+                        section_order: normalizeSectionOrder(paper.section_order),
                         target: 'paper',
                         questions: cartQuestions
                     })
@@ -3315,10 +3369,35 @@
         return window.MathBankSafe.escapeText(str);
     }
 
+    function isWrittenQuestionType(type) {
+        return !['single_choice', 'multi_choice', 'fill_in_blank'].includes(type || 'single_choice');
+    }
+
+    function normalizeSectionOrder(value) {
+        return Array.isArray(value) ? [...new Set(value.filter(type => typeof type === 'string' && type.length > 0))] : [];
+    }
+
+    function getPaperTypeOrder(presentTypes, paperType, sectionOrder = []) {
+        const order = ['single_choice', 'multi_choice', 'fill_in_blank', 'detailed_answer'];
+        if (paperType === 'exam_19') return order;
+        const configured = window.systemMetadata && Array.isArray(window.systemMetadata.question_types)
+            ? window.systemMetadata.question_types : [];
+        configured.forEach(item => {
+            if (item && typeof item.value === 'string' && presentTypes.includes(item.value) && !order.includes(item.value)) {
+                order.push(item.value);
+            }
+        });
+        presentTypes.forEach(type => {
+            if (!order.includes(type)) order.push(type);
+        });
+        const preferred = normalizeSectionOrder(sectionOrder);
+        return preferred.concat(order.filter(type => !preferred.includes(type)));
+    }
+
     function getQuestionTypeCn(type) {
         if (!type) return '题目';
         if (window.systemMetadata && Array.isArray(window.systemMetadata.question_types)) {
-            const found = window.systemMetadata.question_types.find(t => t.value === type);
+            const found = window.systemMetadata.question_types.find(t => t && t.value === type && typeof t.label === 'string' && t.label.trim());
             if (found) return found.label;
         }
         const map = {
@@ -3327,7 +3406,7 @@
             fill_in_blank: '填空题',
             detailed_answer: '解答题'
         };
-        return map[type] || type;
+        return Object.prototype.hasOwnProperty.call(map, type) ? map[type] : type;
     }
 
     function getDifficultyBadge(diff) {

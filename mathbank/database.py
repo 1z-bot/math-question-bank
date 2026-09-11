@@ -21,6 +21,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import declarative_base, sessionmaker
 from mathbank.paths import DATABASE_FILE, sqlite_url
+from mathbank.question_types import normalize_section_order
 
 
 FIGURE_ALIGN_VALUES = frozenset({"right", "center", "bottom_left", "bottom_right"})
@@ -500,6 +501,7 @@ class Paper(Base):
             "total_score": self.total_score,
             "show_secret": meta.get("show_secret", True),
             "show_notice": meta.get("show_notice", True),
+            "section_order": normalize_section_order(meta.get("section_order")),
             "metadata_json": self.metadata_json,
             "created_at": (self.created_at.isoformat() + "Z") if self.created_at else None
         }

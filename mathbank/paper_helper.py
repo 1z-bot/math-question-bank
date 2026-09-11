@@ -11,6 +11,7 @@ from io import BytesIO
 from sqlalchemy.orm import Session
 from mathbank.database import Question, Paper, PaperQuestion, QuestionCurriculum
 from mathbank.paths import TEMPLATES_DIR
+from mathbank.question_types import PAPER_TYPE_ORDER, custom_type_labels, is_written_question_type, paper_type_order
 from mathbank.latex_diagnostics import build_local_latex_diagnostic
 from mathbank.asset_security import AssetSecurityError, resolve_upload_asset
 
@@ -112,7 +113,7 @@ TYPE_LABELS = {
     "detailed_answer": "解答题"
 }
 
-TYPE_ORDER = ["single_choice", "multi_choice", "fill_in_blank", "detailed_answer"]
+TYPE_ORDER = PAPER_TYPE_ORDER
 
 def clean_choice_stem_parentheses(text: str) -> str:
     """清洗选择题末尾的空括号，并保持数学定界符平衡。
@@ -467,6 +468,15 @@ def clean_content_for_latex(
         text = text.replace(token, rendered)
     return text
 
+def _escape_paper_type_label(value: str) -> str:
+    replacements = {
+        "\\": r"\textbackslash{}", "{": r"\{", "}": r"\}",
+        "&": r"\&", "%": r"\%", "#": r"\#", "_": r"\_",
+        "$": r"\textdollar{}", "^": r"\textasciicircum{}", "~": r"\textasciitilde{}",
+    }
+    return "".join(replacements.get(char, char) for char in value)
+
+
 def build_latex_document(
     title: str,
     subtitle: str,
@@ -474,7 +484,9 @@ def build_latex_document(
     questions_data: list,
     include_answers: bool = False,
     show_secret: bool = True,
-    show_notice: bool = True
+    show_notice: bool = True,
+    question_types: list | None = None,
+    section_order: list | None = None,
 ) -> str:
     """
     Generate LaTeX source code based on exam-zh document class matching 试卷类模板.tex.
@@ -606,10 +618,13 @@ def build_latex_document(
             grouped[q_type] = []
         grouped[q_type].append(item)
         
-    for q_type in TYPE_ORDER:
+    labels = custom_type_labels(question_types)
+    for q_type in paper_type_order(grouped, paper_type, question_types, section_order):
         if q_type not in grouped or not grouped[q_type]:
             continue
         items = grouped[q_type]
+        written_type = is_written_question_type(q_type)
+        type_label = _escape_paper_type_label(labels.get(q_type, q_type))
         count = len(items)
         sec_score = sum(it.get("score", 5) for it in items)
         unit_score = items[0].get("score", 5) if count > 0 else 5
@@ -637,7 +652,7 @@ def build_latex_document(
             elif q_type == "fill_in_blank":
                 section_header = "填空题"
             else:
-                section_header = "解答题"
+                section_header = "解答题" if q_type == "detailed_answer" else type_label
         else:
             if q_type == "single_choice":
                 section_header = f"选择题：本题共 {count} 小题，每小题 {unit_score} 分，共 {sec_score} 分。\n  在每小题给出的四个选项中，只有一项是符合题目要求的。"
@@ -646,7 +661,7 @@ def build_latex_document(
             elif q_type == "fill_in_blank":
                 section_header = f"填空题：本题共 {count} 小题，每小题 {unit_score} 分，共 {sec_score} 分。"
             else:
-                section_header = f"解答题：本题共 {count} 小题，共 {sec_score} 分。解答应写出文字说明、证明过程或演算步骤。"
+                section_header = f"{'解答题' if q_type == 'detailed_answer' else type_label}：本题共 {count} 小题，共 {sec_score} 分。解答应写出文字说明、证明过程或演算步骤。"
             
         lines.append(f"\\section{{\n  {section_header}\n}}")
         lines.append("")
@@ -716,8 +731,8 @@ def build_latex_document(
                     ) if preserve_inline_images else None
                 ),
             )
-            env_name = "problem" if q_type == "detailed_answer" else "question"
-            points_arg = f"[points = {q_score}]" if q_type == "detailed_answer" else ""
+            env_name = "problem" if written_type else "question"
+            points_arg = f"[points = {q_score}]" if written_type else ""
 
             default_fig_align = "bottom_right" if paper_type == "quiz" else "right"
             fig_align = q.get("figure_align")
@@ -788,7 +803,7 @@ def build_latex_document(
                     space_val = float(sol_space)
                 except Exception:
                     space_val = 0.0
-                is_sol_spaced = (q_type == "detailed_answer" and not include_answers and space_val > 0)
+                is_sol_spaced = (written_type and not include_answers and space_val > 0)
                 figure_solution_box_height = max(
                     space_val,
                     figure_height_reserve_cm,
@@ -852,7 +867,7 @@ def build_latex_document(
                 lines.append(cleaned_content)
             
             # Inject solution space for detailed_answer questions on papers
-            if q_type == "detailed_answer" and not include_answers:
+            if written_type and not include_answers:
                 sol_space = item.get("solution_space") or q.get("solution_space") or "0.0"
                 try:
                     space_val = float(sol_space)

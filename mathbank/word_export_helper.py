@@ -30,6 +30,7 @@ from docx.oxml.ns import nsdecls, qn
 from docx.shared import Cm, Inches, Pt, RGBColor
 
 from mathbank.runtime_components import find_usable_pandoc
+from mathbank.question_types import PAPER_TYPE_ORDER, custom_type_labels, is_written_question_type, paper_type_order
 
 
 MATH_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
@@ -40,7 +41,7 @@ TYPE_LABELS = {
     "fill_in_blank": "填空题",
     "detailed_answer": "解答题",
 }
-TYPE_ORDER = ("single_choice", "multi_choice", "fill_in_blank", "detailed_answer")
+TYPE_ORDER = PAPER_TYPE_ORDER
 EXAM_19_STARTS = {
     "single_choice": 1,
     "multi_choice": 9,
@@ -958,12 +959,12 @@ class WordExamBuilder:
                     p.paragraph_format.space_after = Pt(2) if idx < len(notices) - 1 else Pt(6)
                     self.add_mixed(p, line, 10.0)
 
-    def add_section_heading(self, q_type: str, items: list[PreparedQuestion], paper_type: str, chinese_index: int) -> None:
+    def add_section_heading(self, q_type: str, items: list[PreparedQuestion], paper_type: str, chinese_index: int, custom_labels: dict[str, str] | None = None) -> None:
         count = len(items)
         section_score = sum(item.score for item in items)
         scores = {item.score for item in items}
         unit_text = f"每小题 {next(iter(scores))} 分，" if len(scores) == 1 else ""
-        label = TYPE_LABELS.get(q_type, "试题")
+        label = TYPE_LABELS.get(q_type, (custom_labels or {}).get(q_type, q_type))
         if paper_type == "quiz":
             heading = label
         else:
@@ -1193,7 +1194,7 @@ class WordExamBuilder:
         if item.choices:
             self.add_choices(item.choices)
 
-        if item.question.get("question_type") == "detailed_answer" and item.solution_space > 0:
+        if is_written_question_type(item.question.get("question_type", "single_choice")) and item.solution_space > 0:
             spacer = self.doc.add_paragraph()
             figure_height_cm = detached_block_height * 2.54
             spacer.paragraph_format.space_after = Cm(
@@ -1581,6 +1582,8 @@ def build_word_document(
     show_secret: bool = True,
     show_notice: bool = True,
     uploads_dir: str | Path | None = None,
+    question_types: list | None = None,
+    section_order: list | None = None,
 ) -> tuple[bytes, dict]:
     """Build an A4 editable DOCX and return bytes plus conversion diagnostics."""
     prepared = [_prepare_question(item, uploads_dir) for item in questions_data]
@@ -1617,14 +1620,17 @@ def build_word_document(
         grouped.setdefault(q_type, []).append(item)
 
     number_by_object: dict[int, int] = {}
+    ordered_items: list[PreparedQuestion] = []
     next_number = 1
     section_index = 0
-    for q_type in TYPE_ORDER:
+    labels = custom_type_labels(question_types)
+    for q_type in paper_type_order(grouped, paper_type, question_types, section_order):
         items = grouped.get(q_type, [])
         if not items:
             continue
+        ordered_items.extend(items)
         section_index += 1
-        builder.add_section_heading(q_type, items, paper_type, section_index)
+        builder.add_section_heading(q_type, items, paper_type, section_index, labels)
         current = EXAM_19_STARTS[q_type] if paper_type == "exam_19" else next_number
         for item in items:
             number_by_object[id(item)] = current
@@ -1634,8 +1640,9 @@ def build_word_document(
             next_number = current
 
     if include_answers:
-        ordered_numbers = [number_by_object.get(id(item), index + 1) for index, item in enumerate(prepared)]
-        builder.add_answers(prepared, ordered_numbers, title)
+        answer_items = prepared if paper_type == "exam_19" else ordered_items
+        ordered_numbers = [number_by_object.get(id(item), index + 1) for index, item in enumerate(answer_items)]
+        builder.add_answers(answer_items, ordered_numbers, title)
 
     output = builder.save_bytes()
     if diagnostics.fallback_formulas:

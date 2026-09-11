@@ -1788,7 +1788,9 @@ def test_paper_cart_actions_reject_changed_hydration_snapshot_and_are_single_fli
     paper_source = _read(STATIC_JS_DIR / "paper.js")
     state_start = paper_source.index("let bankQuestionsAbortController = null;")
     state_end = paper_source.index("// Fetch one server-paginated page", state_start)
-    state_source = paper_source[state_start:state_end]
+    helper_start = paper_source.index("    function normalizeSectionOrder(")
+    helper_end = paper_source.index("    function getPaperTypeOrder(", helper_start)
+    state_source = paper_source[helper_start:helper_end] + paper_source[state_start:state_end]
     save_start = paper_source.index("window.savePaperToDb = async function")
     save_end = paper_source.index("// ----------------- Saved Papers", save_start)
     save_source = paper_source[save_start:save_end]
@@ -1888,6 +1890,14 @@ global.fetch = (url) => {
   if (hydrateCalls !== 2 || saveCalls !== 1) {
     throw new Error('action lock was not released or cached cart was not revalidated');
   }
+  const originalFetch = global.fetch;
+  const orderHydration = deferred();
+  global.fetch = url => String(url).startsWith('/api/paper/questions?') ? orderHydration.promise : originalFetch(url);
+  const pendingSave = window.savePaperToDb();
+  window.PaperStore.meta.section_order = ['calculation', 'single_choice'];
+  orderHydration.resolve({ok:true,json:async()=>({status:'success',data:[{id:2,content:'current question'}]})});
+  await pendingSave;
+  if (saveCalls !== 1) throw new Error('changed section order was saved after hydration');
 })().catch(error => {
   process.stderr.write(String(error.stack || error));
   process.exitCode = 1;

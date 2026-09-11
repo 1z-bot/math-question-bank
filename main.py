@@ -119,6 +119,7 @@ from mathbank.prompts import (
 from mathbank.question_types import (
     detect_structured_question_form,
     normalize_ai_question_form,
+    normalize_section_order,
 )
 import shutil
 from mathbank.pdf_inspector_helper import (
@@ -5819,6 +5820,7 @@ def save_paper(payload: dict, background_tasks: BackgroundTasks, db: Session = D
             meta = {}
         meta["show_secret"] = payload.get("show_secret", True)
         meta["show_notice"] = payload.get("show_notice", True)
+        meta["section_order"] = normalize_section_order(payload.get("section_order", meta.get("section_order")))
 
         paper = Paper(
             title=title,
@@ -6014,8 +6016,8 @@ def export_paper_tex(payload: dict, db: Session = Depends(get_db)):
         questions_input = payload.get("questions", [])
         questions_data = _prepare_paper_export_questions(questions_input, db)
                 
-        tex_main = build_latex_document(title, subtitle, paper_type, questions_data, include_answers=False, show_secret=show_secret, show_notice=show_notice)
-        tex_ans = build_latex_document(title + " (参考答案与解析)", subtitle, paper_type, questions_data, include_answers=True, show_secret=show_secret, show_notice=show_notice)
+        tex_main = build_latex_document(title, subtitle, paper_type, questions_data, include_answers=False, show_secret=show_secret, show_notice=show_notice, question_types=METADATA_CACHE.get("question_types", []), section_order=payload.get("section_order"))
+        tex_ans = build_latex_document(title + " (参考答案与解析)", subtitle, paper_type, questions_data, include_answers=True, show_secret=show_secret, show_notice=show_notice, question_types=METADATA_CACHE.get("question_types", []), section_order=payload.get("section_order"))
         
         if paper_type == "exam_19":
             tex_answer_sheet = build_answer_sheet_latex(title, subtitle, questions_data)
@@ -6048,8 +6050,8 @@ def export_paper_bundle(payload: dict, db: Session = Depends(get_db)):
         questions_input = payload.get("questions", [])
         questions_data = _prepare_paper_export_questions(questions_input, db)
                 
-        tex_main = build_latex_document(title, subtitle, paper_type, questions_data, include_answers=False, show_secret=show_secret, show_notice=show_notice)
-        tex_ans = build_latex_document(title + " (参考答案与解析)", subtitle, paper_type, questions_data, include_answers=True, show_secret=show_secret, show_notice=show_notice)
+        tex_main = build_latex_document(title, subtitle, paper_type, questions_data, include_answers=False, show_secret=show_secret, show_notice=show_notice, question_types=METADATA_CACHE.get("question_types", []), section_order=payload.get("section_order"))
+        tex_ans = build_latex_document(title + " (参考答案与解析)", subtitle, paper_type, questions_data, include_answers=True, show_secret=show_secret, show_notice=show_notice, question_types=METADATA_CACHE.get("question_types", []), section_order=payload.get("section_order"))
         
         if paper_type == "exam_19":
             tex_answer_sheet = build_answer_sheet_latex(title, subtitle, questions_data)
@@ -6154,7 +6156,7 @@ def export_paper_pdf(payload: dict, db: Session = Depends(get_db)):
         if target == "sheet":
             tex_content = build_answer_sheet_latex(title, subtitle, questions_data)
         else:
-            tex_content = build_latex_document(title, subtitle, paper_type, questions_data, include_answers=include_answers, show_secret=show_secret, show_notice=show_notice)
+            tex_content = build_latex_document(title, subtitle, paper_type, questions_data, include_answers=include_answers, show_secret=show_secret, show_notice=show_notice, question_types=METADATA_CACHE.get("question_types", []), section_order=payload.get("section_order"))
 
         image_paths = collect_referenced_images(questions_data, UPLOAD_DIR, UPLOAD_DIR_REL)
         pdf_bytes, log_or_err = compile_tex_to_pdf(tex_content, image_paths)
@@ -6238,6 +6240,8 @@ def export_paper_word(payload: dict, db: Session = Depends(get_db)):
                 show_secret=show_secret,
                 show_notice=show_notice,
                 uploads_dir=UPLOAD_DIR,
+                question_types=METADATA_CACHE.get("question_types", []),
+                section_order=payload.get("section_order"),
             )
             suffix = "_含答案与解析" if include_answers else ""
             filename = f"{safe_title}{suffix}.docx"
@@ -6265,6 +6269,8 @@ def export_paper_word(payload: dict, db: Session = Depends(get_db)):
             show_secret=show_secret,
             show_notice=show_notice,
             uploads_dir=UPLOAD_DIR,
+            question_types=METADATA_CACHE.get("question_types", []),
+            section_order=payload.get("section_order"),
         )
         ans_docx, ans_diag = build_word_document(
             title,
@@ -6275,6 +6281,8 @@ def export_paper_word(payload: dict, db: Session = Depends(get_db)):
             show_secret=show_secret,
             show_notice=show_notice,
             uploads_dir=UPLOAD_DIR,
+            question_types=METADATA_CACHE.get("question_types", []),
+            section_order=payload.get("section_order"),
         )
 
         zip_bytes = create_word_bundle_zip(title, main_docx, ans_docx)
