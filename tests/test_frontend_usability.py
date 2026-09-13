@@ -294,6 +294,72 @@ if (!result.choicesRaw.startsWith(String.raw`\begin{choices}`) || !result.choice
     assert ".paper-choice-options-row" in css_source
 
 
+def test_a4_preview_paginates_by_measured_height_and_keeps_every_question():
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+    css_source = _read(CSS_PATH)
+    helper_start = paper_source.index("function paginatePaperBlocksByHeight(")
+    helper_marker = "window.paginatePaperBlocksByHeight = paginatePaperBlocksByHeight;"
+    helper_end = paper_source.index(helper_marker, helper_start) + len(helper_marker)
+    helper_source = paper_source[helper_start:helper_end]
+
+    assert "PAGE_1_MAX" not in paper_source
+    assert "PAGE_N_MAX" not in paper_source
+    assert "rawContent.length > 200" not in paper_source
+    assert "getBoundingClientRect" in paper_source
+    assert "paper-page-footer" in paper_source
+    assert re.search(
+        r"\.a4-paper-sheet\s*,[^{]*\{[^}]*height:\s*1123px;",
+        css_source,
+        re.DOTALL,
+    )
+
+    node = shutil.which("node")
+    assert node, "Node.js is required for the frontend executable regression"
+    script = r"""
+global.window = {};
+""" + helper_source + r"""
+const blocks = [
+  { id: 'title', type: 'section_title', qType: 'single_choice', height: 40 },
+  { id: 'q1', type: 'question', qType: 'single_choice', height: 80 },
+  { id: 'q2', type: 'question', qType: 'single_choice', height: 100 },
+  { id: 'q3', type: 'question', qType: 'single_choice', height: 100 },
+  { id: 'q4', type: 'question', qType: 'single_choice', height: 80 },
+  { id: 'q5', type: 'question', qType: 'single_choice', height: 190 },
+  { id: 'q6', type: 'question', qType: 'single_choice', height: 120 },
+  { id: 'q7', type: 'question', qType: 'single_choice', height: 180 },
+];
+const pages = window.paginatePaperBlocksByHeight(blocks, 620, 920);
+const ids = pages.flat().map(block => block.id);
+if (JSON.stringify(ids) !== JSON.stringify(blocks.map(block => block.id))) {
+  throw new Error(`pagination lost or reordered blocks: ${JSON.stringify(ids)}`);
+}
+if (ids.filter(id => id === 'q6').length !== 1) {
+  throw new Error(`question 6 count is invalid: ${JSON.stringify(pages)}`);
+}
+if (pages.length !== 2 || pages[0].some(block => block.id === 'q6') || pages[1][0].id !== 'q6') {
+  throw new Error(`measured overflow did not move q6 intact: ${JSON.stringify(pages)}`);
+}
+
+const headingBlocks = [
+  { id: 'q1', type: 'question', qType: 'single_choice', height: 500 },
+  { id: 'title2', type: 'section_title', qType: 'fill_in_blank', height: 40 },
+  { id: 'q2', type: 'question', qType: 'fill_in_blank', height: 120 },
+];
+const headingPages = window.paginatePaperBlocksByHeight(headingBlocks, 620, 920);
+if (headingPages[0].some(block => block.id === 'title2') || headingPages[1][0].id !== 'title2') {
+  throw new Error(`section heading was orphaned: ${JSON.stringify(headingPages)}`);
+}
+"""
+    result = subprocess.run(
+        [node, "-e", script],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_paper_preview_preserves_images_at_authored_complex_content_positions():
     paper_source = _read(STATIC_JS_DIR / "paper.js")
     helper_start = paper_source.index(

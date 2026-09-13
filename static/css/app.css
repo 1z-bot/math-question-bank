@@ -330,6 +330,11 @@ html.init-ws-paper #toggleSidebarBtn { display: none !important; }
 /* Dedicated Protection for A4 Simulated Test Paper Preview */
 .a4-paper-sheet,
 .dark .a4-paper-sheet {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 794px;
+    height: 1123px;
+    min-height: 1123px;
     background-color: #ffffff !important;
     color: #0f172a !important;
     border-color: #cbd5e1 !important;
