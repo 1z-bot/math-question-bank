@@ -68,7 +68,7 @@ def test_editor_preview_converts_exam_zh_paren_after_protecting_math_blocks():
 
     node = shutil.which("node")
     assert node, "Node.js is required for the frontend executable regression"
-    script = helper_source + r"""
+    script = "global.window = {};\n" + helper_source + r"""
 const rendered = transformExamZhParenForPreview(String.raw`题干 \paren`);
 if (rendered.includes(String.raw`\paren`)) {
   throw new Error(`paren macro leaked into preview: ${rendered}`);
@@ -102,6 +102,58 @@ if (similarlyNamed !== String.raw`\parent`) {
     assert ".exam-zh-paren-preview" in css_source
     assert "float: right;" in css_source
     assert re.search(r"\.choices-grid\s*\{[^}]*clear:\s*both;", css_source, re.DOTALL)
+
+
+def test_editor_preview_repairs_naked_math_without_touching_existing_blocks():
+    editor_source = _read(STATIC_JS_DIR / "editor.js")
+    helper_start = editor_source.index("function normalizeNakedMathForPreview(text)")
+    helper_marker = "window.normalizeNakedMathForPreview = normalizeNakedMathForPreview;"
+    helper_end = editor_source.index(helper_marker, helper_start) + len(helper_marker)
+    helper_source = editor_source[helper_start:helper_end]
+
+    assert "(?<!" not in helper_source
+    assert "(?<=" not in helper_source
+
+    node = shutil.which("node")
+    assert node, "Node.js is required for the frontend executable regression"
+    script = "global.window = {};\n" + helper_source + r'''
+const source = String.raw`已知平面向量 \mathbf{a}, \mathbf{b} 不共线，且 2\mathbf{a} + y\mathbf{b} = x\mathbf{a} - 3\mathbf{b}。
+当 x \geqslant 0 时，f(x_1) \leqslant f(x_2)，且 y^2 > 0；当 x < 0 时经过点 (4,8)。
+已有 $z_1^2$。
+\begin{choices}
+\item \frac{1}{2}
+\item x = 2
+\end{choices}`;
+const rendered = normalizeNakedMathForPreview(source);
+for (const expected of [
+  String.raw`$\boldsymbol{a}, \boldsymbol{b}$`,
+  String.raw`$2\boldsymbol{a} + y\boldsymbol{b} = x\boldsymbol{a} - 3\boldsymbol{b}$`,
+  String.raw`$x \geqslant 0$`,
+  String.raw`$x < 0$`,
+  String.raw`$f(x_1) \leqslant f(x_2)$`,
+  String.raw`$y^2 > 0$`,
+  String.raw`$x < 0$`,
+  String.raw`$(4,8)$`,
+  String.raw`$z_1^2$`,
+  String.raw`\item $\frac{1}{2}$`,
+  String.raw`\item $x = 2$`,
+]) {
+  if (!rendered.includes(expected)) {
+    throw new Error(`missing normalized math ${expected}: ${rendered}`);
+  }
+}
+if (rendered.includes(String.raw`$$z_1^2$$`)) {
+  throw new Error(`existing math was double wrapped: ${rendered}`);
+}
+'''
+    result = subprocess.run(
+        [node, "-e", script],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_editor_preview_restores_adjacent_math_without_splitting_fillin_lines():
