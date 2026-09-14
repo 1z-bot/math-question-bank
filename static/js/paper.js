@@ -971,6 +971,9 @@
 
         if (key === 'title' || key === 'subtitle') {
             syncCanvasHeaderMeta(key, value);
+            if (typeof window.scheduleActiveA4Repagination === 'function') {
+                window.scheduleActiveA4Repagination();
+            }
         } else {
             window.renderPaperCanvas();
         }
@@ -1545,6 +1548,16 @@
         const container = document.getElementById('paperCanvasSection');
         if (!container) return;
 
+        if (window.activeA4PaginationResizeObserver) {
+            window.activeA4PaginationResizeObserver.disconnect();
+            window.activeA4PaginationResizeObserver = null;
+        }
+        if (window.activeA4PaginationFrame && typeof cancelAnimationFrame === 'function') {
+            cancelAnimationFrame(window.activeA4PaginationFrame);
+        }
+        window.activeA4PaginationFrame = null;
+        window.scheduleActiveA4Repagination = null;
+
         // 保存更新前的 A4 画布与外层 Section 滚动位置，解决重绘导致的视口跳回第一页问题
         const oldSheet = document.getElementById('a4PaperPreviewSheet');
         const savedSheetScrollTop = oldSheet ? oldSheet.scrollTop : 0;
@@ -1746,13 +1759,31 @@
             rebalanceA4PaperPages(sheet, meta, totalCount, totalScore);
 
             const repaginateAfterLayoutChange = () => {
-                if (!sheet.isConnected) return;
+                if (!sheet.isConnected) {
+                    if (window.activeA4PaginationResizeObserver) {
+                        window.activeA4PaginationResizeObserver.disconnect();
+                        window.activeA4PaginationResizeObserver = null;
+                    }
+                    return;
+                }
+                if (window.activeA4PaginationFrame) return;
                 if (typeof requestAnimationFrame === 'function') {
-                    requestAnimationFrame(() => rebalanceA4PaperPages(sheet, meta, totalCount, totalScore));
+                    window.activeA4PaginationFrame = requestAnimationFrame(() => {
+                        window.activeA4PaginationFrame = null;
+                        rebalanceA4PaperPages(sheet, meta, totalCount, totalScore);
+                    });
                 } else {
                     rebalanceA4PaperPages(sheet, meta, totalCount, totalScore);
                 }
             };
+            window.scheduleActiveA4Repagination = repaginateAfterLayoutChange;
+
+            if (typeof ResizeObserver !== 'undefined') {
+                const resizeObserver = new ResizeObserver(repaginateAfterLayoutChange);
+                resizeObserver.observe(sheet);
+                sheet.querySelectorAll('.paper-page-block').forEach(block => resizeObserver.observe(block));
+                window.activeA4PaginationResizeObserver = resizeObserver;
+            }
             sheet.querySelectorAll('img').forEach(image => {
                 if (!image.complete) {
                     image.addEventListener('load', repaginateAfterLayoutChange, { once: true });
@@ -1828,7 +1859,7 @@
 
             ${isExamType ? `
                 <div class="text-[12px] text-center font-serif text-slate-800 mb-4">
-                    本试卷共 ${totalPages} 页，${totalCount} 题。全卷满分 ${totalScore} 分。考试用时 120 分钟。
+                    本试卷共 <span data-paper-total-pages>${totalPages}</span> 页，${totalCount} 题。全卷满分 ${totalScore} 分。考试用时 120 分钟。
                 </div>
 
                 <!-- Standard LaTeX Notice Block with Interactive Toggle -->
@@ -1875,8 +1906,25 @@
             ) ? block.height + nextBlock.height : block.height;
             const wouldOverflow = currentHeight + block.height > pageLimit;
             const wouldOrphanHeading = currentHeight + keepWithNextHeight > pageLimit;
+            const headingPairFitsLaterPage = (
+                block.type === 'section_title'
+                && currentPage.length === 0
+                && pages.length === 0
+                && keepWithNextHeight > firstPageLimit
+                && keepWithNextHeight <= laterPageLimit
+            );
+            if (headingPairFitsLaterPage) {
+                pages.push([]);
+            }
+            const keepOversizeWithHeading = (
+                block.type === 'question'
+                && block.height > laterPageLimit
+                && currentPage.length === 1
+                && currentPage[0].type === 'section_title'
+                && currentPage[0].qType === block.qType
+            );
 
-            if (currentPage.length > 0 && (wouldOverflow || wouldOrphanHeading)) {
+            if (currentPage.length > 0 && !keepOversizeWithHeading && (wouldOverflow || wouldOrphanHeading)) {
                 pages.push(currentPage);
                 currentPage = [];
                 currentHeight = 0;
@@ -1898,19 +1946,25 @@
         return Math.ceil(element.getBoundingClientRect().height + marginTop + marginBottom);
     }
 
-    function createMeasuredA4Page(meta, totalCount, totalScore, pageIndex, totalPages, blocks) {
+    function createMeasuredA4Page(meta, totalCount, totalScore, pageIndex, totalPages, pageLimit, blocks) {
         const page = document.createElement('div');
-        page.className = 'a4-paper-sheet w-full max-w-[794px] h-[1123px] bg-white text-slate-900 px-10 py-12 shadow-2xl rounded-sm border border-slate-300 font-serif leading-relaxed relative overflow-hidden select-none mb-8';
+        const hasOversizeBlock = blocks.some(block => block.height > pageLimit);
+        page.className = 'a4-paper-sheet w-full max-w-[794px] h-[1123px] bg-white text-slate-900 px-10 py-12 shadow-2xl rounded-sm border border-slate-300 font-serif leading-relaxed relative overflow-hidden select-none mb-8'
+            + (hasOversizeBlock ? ' a4-paper-sheet--expanded' : '');
         page.dataset.paperPageIndex = String(pageIndex);
+        page.dataset.paperPageExpanded = hasOversizeBlock ? 'true' : 'false';
         page.innerHTML = `
             ${pageIndex === 0 ? `<div class="paper-page-header">${renderA4Header(meta, totalCount, totalScore, totalPages)}</div>` : ''}
+            ${hasOversizeBlock ? `
+                <div class="paper-oversize-notice" role="status">
+                    本页题目超过单页高度，预览已自动扩展以完整显示；导出时由排版引擎继续分页。
+                </div>
+            ` : ''}
             <div class="paper-page-content space-y-1.5 text-[13px]"></div>
             <div class="paper-page-footer absolute bottom-5 left-0 right-0 text-center text-xs font-serif text-slate-700 tracking-wider">
                 数学 &nbsp; 第 ${pageIndex + 1} 页 (共 ${totalPages} 页)
             </div>
         `;
-        const content = page.querySelector('.paper-page-content');
-        blocks.forEach(block => content.appendChild(block.node));
         return page;
     }
 
@@ -1939,17 +1993,42 @@
         const pages = paginatePaperBlocksByHeight(measuredBlocks, firstPageLimit, laterPageLimit);
         if (!pages.length) return;
 
-        sheet.innerHTML = '';
+        const savedScrollTop = sheet.scrollTop;
+        const oldPages = Array.from(sheet.querySelectorAll(':scope > .a4-paper-sheet'));
+        const existingHeader = firstPage.querySelector('.paper-page-header');
+        const newPages = [];
         pages.forEach((blocks, pageIndex) => {
-            sheet.appendChild(createMeasuredA4Page(
+            const pageLimit = pageIndex === 0 ? firstPageLimit : laterPageLimit;
+            const page = createMeasuredA4Page(
                 meta,
                 totalCount,
                 totalScore,
                 pageIndex,
                 pages.length,
+                pageLimit,
                 blocks
-            ));
+            );
+            sheet.appendChild(page);
+            newPages.push(page);
         });
+
+        if (existingHeader && newPages[0]) {
+            const generatedHeader = newPages[0].querySelector('.paper-page-header');
+            if (generatedHeader) generatedHeader.replaceWith(existingHeader);
+            const totalPagesNode = existingHeader.querySelector('[data-paper-total-pages]');
+            if (totalPagesNode) totalPagesNode.textContent = String(pages.length);
+        }
+
+        pages.forEach((blocks, pageIndex) => {
+            const content = newPages[pageIndex].querySelector('.paper-page-content');
+            const pageLimit = pageIndex === 0 ? firstPageLimit : laterPageLimit;
+            blocks.forEach(block => {
+                block.node.classList.toggle('paper-page-block--oversize', block.height > pageLimit);
+                content.appendChild(block.node);
+            });
+        });
+        oldPages.forEach(page => page.remove());
+        sheet.scrollTop = savedScrollTop;
     }
     window.rebalanceA4PaperPages = rebalanceA4PaperPages;
 

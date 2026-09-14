@@ -395,8 +395,24 @@ def test_a4_preview_paginates_by_measured_height_and_keeps_every_question():
     assert "rawContent.length > 200" not in paper_source
     assert "getBoundingClientRect" in paper_source
     assert "paper-page-footer" in paper_source
+    assert "new ResizeObserver(repaginateAfterLayoutChange)" in paper_source
+    assert "resizeObserver.observe(sheet)" in paper_source
+    assert "resizeObserver.observe(block)" in paper_source
+    assert "window.scheduleActiveA4Repagination" in paper_source
+    assert "sheet.innerHTML = '';" not in paper_source
+    assert "generatedHeader.replaceWith(existingHeader)" in paper_source
+    assert "a4-paper-sheet--expanded" in paper_source
+    assert "预览已自动扩展以完整显示" in paper_source
     assert re.search(
         r"\.a4-paper-sheet\s*,[^{]*\{[^}]*height:\s*1123px;",
+        css_source,
+        re.DOTALL,
+    )
+    assert re.search(
+        r"\.a4-paper-sheet\.a4-paper-sheet--expanded[^}]*"
+        r"height:\s*auto\s*!important;[^}]*"
+        r"flex-shrink:\s*0\s*!important;[^}]*"
+        r"overflow:\s*visible\s*!important;",
         css_source,
         re.DOTALL,
     )
@@ -436,6 +452,25 @@ const headingBlocks = [
 const headingPages = window.paginatePaperBlocksByHeight(headingBlocks, 620, 920);
 if (headingPages[0].some(block => block.id === 'title2') || headingPages[1][0].id !== 'title2') {
   throw new Error(`section heading was orphaned: ${JSON.stringify(headingPages)}`);
+}
+
+const oversizeBlocks = [
+  { id: 'oversize-title', type: 'section_title', qType: 'detailed_answer', height: 40 },
+  { id: 'oversize-question', type: 'question', qType: 'detailed_answer', height: 1251 },
+];
+const oversizePages = window.paginatePaperBlocksByHeight(oversizeBlocks, 620, 920);
+if (oversizePages.length !== 1 || oversizePages[0].map(block => block.id).join(',') !== 'oversize-title,oversize-question') {
+  throw new Error(`oversize question lost content or orphaned its heading: ${JSON.stringify(oversizePages)}`);
+}
+
+const firstPageHeadingPair = [
+  { id: 'later-title', type: 'section_title', qType: 'detailed_answer', height: 40 },
+  { id: 'later-question', type: 'question', qType: 'detailed_answer', height: 700 },
+];
+const firstPageHeadingPages = window.paginatePaperBlocksByHeight(firstPageHeadingPair, 620, 920);
+if (firstPageHeadingPages.length !== 2 || firstPageHeadingPages[0].length !== 0 ||
+    firstPageHeadingPages[1].map(block => block.id).join(',') !== 'later-title,later-question') {
+  throw new Error(`heading pair that fits a later page was split: ${JSON.stringify(firstPageHeadingPages)}`);
 }
 """
     result = subprocess.run(
@@ -1929,9 +1964,10 @@ if (window.PaperStore.streamPagination.selected.page !== 1 ||
 }
 '''
     result = subprocess.run(
-        [node, "-e", script],
+        [node, "-"],
         cwd=PROJECT_ROOT,
         text=True,
+        input=script,
         capture_output=True,
         check=False,
     )
