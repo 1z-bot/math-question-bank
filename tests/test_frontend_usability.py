@@ -119,15 +119,19 @@ def test_editor_preview_repairs_naked_math_without_touching_existing_blocks():
     script = "global.window = {};\n" + helper_source + r'''
 const source = String.raw`已知平面向量 \mathbf{a}, \mathbf{b} 不共线，且 2\mathbf{a} + y\mathbf{b} = x\mathbf{a} - 3\mathbf{b}。
 当 x \geqslant 0 时，f(x_1) \leqslant f(x_2)，且 y^2 > 0；当 x < 0 时经过点 (4,8)。
-已有 $z_1^2$。
+已有 $z_1^2$，以及跨行公式 $u^2 +
+v^2 = 1$。
+\begin{cases} x=1 \\ y=2 \end{cases}
+\begin{tabular}{cc} x_1 & y_1 \\ x_2 & y_2 \end{tabular}
+题干 \paren
 \begin{choices}
 \item \frac{1}{2}
 \item x = 2
 \end{choices}`;
 const rendered = normalizeNakedMathForPreview(source);
 for (const expected of [
-  String.raw`$\boldsymbol{a}, \boldsymbol{b}$`,
-  String.raw`$2\boldsymbol{a} + y\boldsymbol{b} = x\boldsymbol{a} - 3\boldsymbol{b}$`,
+  String.raw`$\mathbf{a}, \mathbf{b}$`,
+  String.raw`$2\mathbf{a} + y\mathbf{b} = x\mathbf{a} - 3\mathbf{b}$`,
   String.raw`$x \geqslant 0$`,
   String.raw`$x < 0$`,
   String.raw`$f(x_1) \leqslant f(x_2)$`,
@@ -135,6 +139,11 @@ for (const expected of [
   String.raw`$x < 0$`,
   String.raw`$(4,8)$`,
   String.raw`$z_1^2$`,
+  String.raw`$u^2 +
+v^2 = 1$`,
+  String.raw`$\begin{cases} x=1 \\ y=2 \end{cases}$`,
+  String.raw`\begin{tabular}{cc} x_1 & y_1 \\ x_2 & y_2 \end{tabular}`,
+  String.raw`题干 \paren`,
   String.raw`\item $\frac{1}{2}$`,
   String.raw`\item $x = 2$`,
 ]) {
@@ -144,6 +153,12 @@ for (const expected of [
 }
 if (rendered.includes(String.raw`$$z_1^2$$`)) {
   throw new Error(`existing math was double wrapped: ${rendered}`);
+}
+if (rendered.includes(String.raw`$\begin{cases} $`) || rendered.includes(String.raw`$\begin{tabular}`)) {
+  throw new Error(`structured environment was split or wrapped incorrectly: ${rendered}`);
+}
+if (rendered.includes(String.raw`$\paren$`) || rendered.includes(String.raw`\boldsymbol`)) {
+  throw new Error(`text macro or explicit vector typography was changed: ${rendered}`);
 }
 '''
     result = subprocess.run(
@@ -200,6 +215,27 @@ for (const source of [
   if (rendered.includes('@@MATH_PLACEHOLDER_')) {
     throw new Error(`math placeholder leaked: ${rendered}`);
   }
+}
+
+const structured = window.preprocessFormulaForKaTeX(String.raw`\begin{tabular}{cc} x_1 & y_1 \\ x_2 & y_2 \end{tabular}`);
+if ((structured.match(/<td\b/g) || []).length !== 4) {
+  throw new Error(`tabular structure did not render as 2x2 HTML: ${structured}`);
+}
+for (const cellMath of [String.raw`$x_1$`, String.raw`$y_1$`, String.raw`$x_2$`, String.raw`$y_2$`]) {
+  if (!structured.includes(cellMath)) {
+    throw new Error(`table cell math was not repaired safely: ${structured}`);
+  }
+}
+
+const casesSource = String.raw`\begin{cases} x=1 \\ y=2 \end{cases}`;
+const renderedCases = window.preprocessFormulaForKaTeX(casesSource);
+if (renderedCases !== '$' + casesSource + '$') {
+  throw new Error(`cases environment was not wrapped as one formula: ${renderedCases}`);
+}
+
+const multilineSource = `$x^2 +\ny^2 = 1$`;
+if (window.preprocessFormulaForKaTeX(multilineSource) !== multilineSource) {
+  throw new Error('multiline math was changed or double wrapped');
 }
 """
     result = subprocess.run(

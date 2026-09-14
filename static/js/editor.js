@@ -1880,15 +1880,15 @@ let bankQuestionsRetryTimer = null;
         function normalizeNakedMathForPreview(text) {
             if (!text) return "";
             let source = String(text);
-            if (/向量|vector/i.test(source)) {
-                source = source.replace(/\\mathbf\s*\{\s*([a-z])\s*\}/g, '\\boldsymbol{$1}');
-            }
 
             const placeholders = [];
-            function protect(pattern) {
+            function protect(pattern, transform) {
                 source = source.replace(pattern, function(match) {
                     const marker = `\uE000${placeholders.length}\uE001`;
-                    placeholders.push({ marker, original: match });
+                    placeholders.push({
+                        marker,
+                        original: typeof transform === 'function' ? transform(match) : match
+                    });
                     return marker;
                 });
             }
@@ -1898,17 +1898,28 @@ let bankQuestionsRetryTimer = null;
                 /`[^`\n]*`/g,
                 /!\[[^\]\n]*\]\([^\n)]*\)/g,
                 /\[\[MBM_[A-Za-z0-9_:-]+\]\]/g,
+                /\[ILLUSTRATION_BOX:\s*[^\]\n]*\]/gi,
                 /\$\$[\s\S]*?\$\$/g,
                 /\\\[[\s\S]*?\\\]/g,
                 /\\\([\s\S]*?\\\)/g,
-                /\$[^$\n]+?\$/g,
+                /\$[\s\S]*?\$/g,
+                /\\begin\{(tabular\*?|tabularx|longtable|tblr|longtblr|talltblr)\}[\s\S]*?\\end\{\1\}/g
+            ].forEach(function(pattern) { protect(pattern); });
+
+            protect(
+                /\\begin\{(cases|aligned|alignedat|gathered|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|smallmatrix|array|equation\*?|gather\*?|multline\*?|split)\}[\s\S]*?\\end\{\1\}/g,
+                function(environment) { return '$' + environment.trim() + '$'; }
+            );
+
+            [
                 /\\(?:begin|end)\{[^}\n]+\}/g,
                 /\\item\b/g,
                 /\\fillin\b/g,
+                /\\paren\b/g,
                 /\\textbf\{[^{}\n]*\}/g,
                 /\\includegraphics(?:\s*\[[^\]\n]*\])?\s*\{[^}\n]+\}/g,
                 /<\/?[A-Za-z][^>\n]*>/g
-            ].forEach(protect);
+            ].forEach(function(pattern) { protect(pattern); });
 
             source = source.replace(/[A-Za-z0-9\\{}_^+\-*/=<>|(),.:\[\]\t ]+/g, function(raw) {
                 const core = raw.trim();
@@ -1916,7 +1927,7 @@ let bankQuestionsRetryTimer = null;
                 const nonMathCommands = new Set([
                     'begin', 'bottomrule', 'centering', 'cline', 'end', 'fillin',
                     'hline', 'includegraphics', 'item', 'midrule', 'multicolumn',
-                    'multirow', 'renewcommand', 'textbf', 'toprule'
+                    'multirow', 'paren', 'renewcommand', 'textbf', 'toprule'
                 ]);
                 const commands = core.match(/\\[A-Za-z]+/g) || [];
                 const hasMathCommand = commands.some(command => !nonMathCommands.has(command.slice(1).toLowerCase()));
@@ -2219,7 +2230,7 @@ let bankQuestionsRetryTimer = null;
                             }
                         }
 
-                        cell = unescapeTableCellForHtml(cell);
+                        cell = normalizeNakedMathForPreview(unescapeTableCellForHtml(cell));
                         const borderClass = "border border-slate-300 dark:border-slate-700";
                         const rowspanAttr = rowspan > 1 ? ' rowspan="' + rowspan + '"' : "";
                         html += '<td colspan="' + colspan + '"' + rowspanAttr + ' class="px-3 py-1.5 ' + borderClass + ' ' + alignClass + ' font-normal align-middle">' + cell + '</td>';

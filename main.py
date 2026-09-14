@@ -1104,9 +1104,6 @@ def ocr_formula(
             latex_content = latex_content.replace("\\,", "").replace("\\!", "")
             # 自动清洗规范化下划线/连续划线/任何 \underline 变体为标准的 \fillin 宏
             latex_content = normalize_fillin_macro(latex_content)
-            # Repair high-confidence naked math emitted by OCR before it reaches
-            # the editor. Existing delimiters and document structure are kept.
-            latex_content = normalize_question_math_markdown(latex_content)
 
         # ----------------- 双阶段多模态识图与高级 TikZ 绘图模型联动 -----------------
         tikz_code_from_high_model = None
@@ -1138,6 +1135,11 @@ def ocr_formula(
             else:
                 # 剔除可能存在的由于大模型幻觉或者部分输出造成的残缺标记
                 latex_content = re.sub(r"\[ILLUSTRATION_BOX:.*?\]", "", latex_content).strip()
+
+            # Remove OCR protocol markers before repairing naked math. Otherwise
+            # the underscore in ILLUSTRATION_BOX can be mistaken for a subscript
+            # and leave behind an empty ``$$`` pair after marker cleanup.
+            latex_content = normalize_question_math_markdown(latex_content)
 
         # 如果高级模型成功生成了 TikZ 代码，我们在后台自动进行编译预览，并格式化追加到 latex 文本中！
         if tikz_code_from_high_model:

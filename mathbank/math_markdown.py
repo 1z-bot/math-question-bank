@@ -13,6 +13,15 @@ from collections.abc import Callable
 
 _MATH_RUN_RE = re.compile(r"[A-Za-z0-9\\{}_^+\-*/=<>|(),.:\[\]\t ]+")
 _MATH_COMMAND_RE = re.compile(r"\\([A-Za-z]+)")
+_TABLE_ENVIRONMENT_RE = re.compile(
+    r"\\begin\{(tabular\*?|tabularx|longtable|tblr|longtblr|talltblr)\}"
+    r"[\s\S]*?\\end\{\1\}"
+)
+_MATH_ENVIRONMENT_RE = re.compile(
+    r"\\begin\{(cases|aligned|alignedat|gathered|matrix|pmatrix|bmatrix|"
+    r"Bmatrix|vmatrix|Vmatrix|smallmatrix|array|equation\*?|gather\*?|"
+    r"multline\*?|split)\}[\s\S]*?\\end\{\1\}"
+)
 _NON_MATH_COMMANDS = {
     "begin",
     "bottomrule",
@@ -26,6 +35,7 @@ _NON_MATH_COMMANDS = {
     "midrule",
     "multicolumn",
     "multirow",
+    "paren",
     "renewcommand",
     "textbf",
     "toprule",
@@ -36,10 +46,12 @@ def _replace_with_placeholders(
     value: str,
     pattern: re.Pattern[str],
     placeholders: list[tuple[str, str]],
+    transform: Callable[[str], str] | None = None,
 ) -> str:
     def save(match: re.Match[str]) -> str:
         marker = f"\ue000{len(placeholders)}\ue001"
-        placeholders.append((marker, match.group(0)))
+        original = match.group(0)
+        placeholders.append((marker, transform(original) if transform else original))
         return marker
 
     return pattern.sub(save, value)
@@ -47,23 +59,72 @@ def _replace_with_placeholders(
 
 def _protect_non_candidates(value: str) -> tuple[str, Callable[[str], str]]:
     placeholders: list[tuple[str, str]] = []
-    patterns = (
+    protected = value
+    protected = _replace_with_placeholders(
+        protected,
         re.compile(r"```[\s\S]*?```"),
+        placeholders,
+    )
+    protected = _replace_with_placeholders(
+        protected,
         re.compile(r"`[^`\n]*`"),
+        placeholders,
+    )
+    protected = _replace_with_placeholders(
+        protected,
         re.compile(r"!\[[^\]\n]*\]\([^\n)]*\)"),
+        placeholders,
+    )
+    protected = _replace_with_placeholders(
+        protected,
         re.compile(r"\[\[MBM_[A-Za-z0-9_:-]+\]\]"),
+        placeholders,
+    )
+    protected = _replace_with_placeholders(
+        protected,
+        re.compile(r"\[ILLUSTRATION_BOX:\s*[^\]\n]*\]", re.IGNORECASE),
+        placeholders,
+    )
+    protected = _replace_with_placeholders(
+        protected,
         re.compile(r"\$\$[\s\S]*?\$\$"),
+        placeholders,
+    )
+    protected = _replace_with_placeholders(
+        protected,
         re.compile(r"\\\[[\s\S]*?\\\]"),
+        placeholders,
+    )
+    protected = _replace_with_placeholders(
+        protected,
         re.compile(r"\\\([\s\S]*?\\\)"),
-        re.compile(r"\$[^$\n]+?\$"),
+        placeholders,
+    )
+    protected = _replace_with_placeholders(
+        protected,
+        re.compile(r"\$[\s\S]*?\$"),
+        placeholders,
+    )
+    protected = _replace_with_placeholders(
+        protected,
+        _TABLE_ENVIRONMENT_RE,
+        placeholders,
+    )
+    protected = _replace_with_placeholders(
+        protected,
+        _MATH_ENVIRONMENT_RE,
+        placeholders,
+        lambda environment: f"${environment.strip()}$",
+    )
+    patterns = (
         re.compile(r"\\(?:begin|end)\{[^}\n]+\}"),
         re.compile(r"\\item\b"),
         re.compile(r"\\fillin\b"),
+        re.compile(r"\\paren\b"),
         re.compile(r"\\textbf\{[^{}\n]*\}"),
         re.compile(r"\\includegraphics(?:\s*\[[^\]\n]*\])?\s*\{[^}\n]+\}"),
         re.compile(r"</?[A-Za-z][^>\n]*>"),
     )
-    protected = value
     for pattern in patterns:
         protected = _replace_with_placeholders(protected, pattern, placeholders)
 
@@ -108,29 +169,18 @@ def _wrap_math_run(match: re.Match[str]) -> str:
     return f"{leading}${core}${trailing}"
 
 
-def _normalize_vector_commands(value: str) -> str:
-    if not re.search(r"向量|vector", value, re.IGNORECASE):
-        return value
-    return re.sub(
-        r"\\mathbf\s*\{\s*([a-z])\s*\}",
-        r"\\boldsymbol{\1}",
-        value,
-    )
-
-
 def normalize_question_math_markdown(value: str) -> str:
     """Wrap high-confidence naked LaTeX/math runs in inline delimiters.
 
-    Existing math blocks, Markdown images, content-lock references and
-    structural LaTeX commands are preserved byte-for-byte.  Lowercase
-    ``\\mathbf`` symbols are converted to ``\\boldsymbol`` only when the
-    surrounding question explicitly describes vectors.
+    Existing math blocks, Markdown images, content-lock references, table
+    environments and structural LaTeX commands are preserved byte-for-byte.
+    Naked math environments are wrapped as a whole. Explicit typography such
+    as ``\\mathbf`` or ``\\boldsymbol`` is never inferred from prose.
     """
 
     if not isinstance(value, str) or not value:
         return value or ""
-    normalized = _normalize_vector_commands(value)
-    protected, restore = _protect_non_candidates(normalized)
+    protected, restore = _protect_non_candidates(value)
     repaired_lines = [
         _MATH_RUN_RE.sub(_wrap_math_run, line)
         for line in protected.splitlines(keepends=True)

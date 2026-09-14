@@ -1,7 +1,7 @@
 from mathbank.math_markdown import normalize_question_math_markdown
 
 
-def test_normalizes_vector_notation_and_wraps_vector_equations():
+def test_wraps_vector_equations_without_guessing_vector_typography():
     source = (
         r"已知平面向量 \mathbf{a}, \mathbf{b} 不共线，"
         r"且 2\mathbf{a} + y\mathbf{b} = x\mathbf{a} - 3\mathbf{b}，则（ ）"
@@ -9,12 +9,12 @@ def test_normalizes_vector_notation_and_wraps_vector_equations():
 
     normalized = normalize_question_math_markdown(source)
 
-    assert r"$\boldsymbol{a}, \boldsymbol{b}$ 不共线" in normalized
+    assert r"$\mathbf{a}, \mathbf{b}$ 不共线" in normalized
     assert (
-        r"$2\boldsymbol{a} + y\boldsymbol{b} = "
-        r"x\boldsymbol{a} - 3\boldsymbol{b}$"
+        r"$2\mathbf{a} + y\mathbf{b} = "
+        r"x\mathbf{a} - 3\mathbf{b}$"
     ) in normalized
-    assert r"\mathbf" not in normalized
+    assert r"\boldsymbol" not in normalized
 
 
 def test_wraps_subscripts_superscripts_relations_sets_and_geometry():
@@ -70,6 +70,32 @@ def test_preserves_existing_math_images_locks_and_structural_commands():
     assert "\\fillin" in normalized
 
 
+def test_protects_multiline_math_complete_environments_tables_and_text_macros():
+    multiline_math = "$x^2 +\ny^2 = 1$"
+    cases = "\\begin{cases} x=1 \\\\ y=2 \\end{cases}"
+    table = "\\begin{tabular}{cc} x_1 & y_1 \\\\ x_2 & y_2 \\end{tabular}"
+    source = f"已有 {multiline_math}。\n{cases}\n{table}\n题干 \\paren"
+
+    normalized = normalize_question_math_markdown(source)
+
+    assert multiline_math in normalized
+    assert f"${cases}$" in normalized
+    assert "$\\begin{cases} $" not in normalized
+    assert table in normalized
+    assert "$\\begin{tabular}" not in normalized
+    assert "题干 \\paren" in normalized
+    assert "$\\paren$" not in normalized
+
+
+def test_preserves_illustration_protocol_marker_until_ocr_cleanup():
+    source = "已知三角形 ABC\n[ILLUSTRATION_BOX: 10, 20, 90, 80]"
+
+    normalized = normalize_question_math_markdown(source)
+
+    assert normalized.endswith("[ILLUSTRATION_BOX: 10, 20, 90, 80]")
+    assert "$[ILLUSTRATION_BOX" not in normalized
+
+
 def test_does_not_wrap_plain_chinese_or_ordinary_english_words():
     source = (
         "这是一段普通中文，MathBank keeps prose readable。\n"
@@ -114,6 +140,6 @@ def test_parse_paper_postprocesses_future_imports_without_touching_database():
         questions = parse_paper_text_internal("原始试卷文本", True)
 
     assert questions[0]["content"] == (
-        r"已知向量 $\boldsymbol{a}$，当 $x_1^2 \geqslant 0$ 时"
+        r"已知向量 $\mathbf{a}$，当 $x_1^2 \geqslant 0$ 时"
     )
     assert questions[0]["answer_markdown"] == r"由 $y^2 = x_1$ 得"
