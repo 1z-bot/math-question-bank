@@ -516,16 +516,20 @@ const window = {{}};
 let parsedQuestionsData = [];
 let parsedQuestionsGeneration = 0;
 const pendingFetches = [];
-function fetch() {{
+const requests = [];
+const systemPreferSolveModel = "ZHONGZHAN_GPT/gpt-5:high";
+function fetch(url, options) {{
+  requests.push(options.body.values);
   return new Promise(resolve => pendingFetches.push(resolve));
 }}
-class FormData {{ append() {{}} }}
+class FormData {{ constructor() {{ this.values = {{}}; }} append(k, v) {{ this.values[k] = v; }} }}
 const localStorage = {{ getItem() {{ return ''; }} }};
 const logs = [];
 const toasts = [];
 function appendImportLog(message) {{ logs.push(message); }}
 function showToast(message) {{ toasts.push(message); }}
 function renderParsedCardPreview() {{}}
+function invalidateParsedDuplicateCheck() {{}}
 function makeCard() {{
   const button = {{ disabled: false, innerHTML: '' }};
   const answer = {{ value: '' }};
@@ -592,6 +596,31 @@ const document = {{ getElementById() {{ return activeCard; }} }};
   }}
   if (logs.some(message => message.includes('全部完成'))) {{
     throw new Error('stale answer queue announced completion in the new session');
+  }}
+  replaceParsedQuestions([
+    {{ content: 'original', answer_markdown: 'A' }},
+    {{ content: 'numeric', answer_markdown: '2' }},
+    {{ content: 'missing', answer_markdown: '' }}
+  ]);
+  const batch = processAsyncAnswerGeneration(parsedQuestionsData);
+  if (pendingFetches.length !== 1) throw new Error('original short answers were regenerated');
+  pendingFetches.shift()({{ ok: false, status: 502 }});
+  await batch;
+  if (!logs.some(message => message.includes('成功 0 题，失败 1 题'))) {{
+    throw new Error('failed batch was reported as successful');
+  }}
+  replaceParsedQuestions(Array.from({{ length: 4 }}, (_, i) => ({{ content: `q${{i}}`, answer_markdown: '' }})));
+  const successfulBatch = processAsyncAnswerGeneration(parsedQuestionsData);
+  if (pendingFetches.length !== 3) throw new Error('answer queue exceeded concurrency limit');
+  for (let i = 0; i < 4; i++) {{
+    pendingFetches.shift()({{ ok: true, json: async () => ({{ status: 'success', solution: 'solved' }}) }});
+    await new Promise(resolve => setImmediate(resolve));
+  }}
+  await successfulBatch;
+  if (parsedQuestionsData.some(q => q.answer_markdown !== 'solved')) throw new Error('queue did not solve all missing answers');
+  if (!logs.some(message => message.includes('成功 4 题，失败 0 题'))) throw new Error('incorrect successful batch summary');
+  if (requests.some(request => request.model !== systemPreferSolveModel || request.thinking !== 'disabled')) {{
+    throw new Error('import requests ignored configured solve settings');
   }}
 }})().catch(error => {{ console.error(error); process.exitCode = 1; }});
 """

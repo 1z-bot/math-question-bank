@@ -8,7 +8,8 @@ model name, and optional reasoning effort.
 from dataclasses import dataclass, field
 import os
 import re
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
+from urllib.parse import urlsplit
 
 
 _VALID_REASONING_EFFORTS = frozenset(
@@ -46,7 +47,6 @@ def inject_reasoning_effort(
     ):
         return result
     result["reasoning_effort"] = normalized_effort
-    result["enable_thinking"] = True
     return result
 
 
@@ -122,6 +122,93 @@ def apply_bailian_thinking_policy(
         return result
 
     raise ValueError(f"未知的百炼思考策略任务: {task}")
+
+
+def apply_model_thinking_policy(
+    payload: Mapping[str, Any],
+    *,
+    provider: "Union[TextProviderConfig, MultimodalProviderConfig]",
+    task: str,
+    thinking_enabled: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """Build thinking parameters by provider AND model, without mutating input.
+
+    An effort selection is not a universal enable_thinking switch. Unknown
+    transit aliases keep their model ID and explicit effort unchanged; their
+    gateway, rather than a guessed vendor protocol, defines their semantics.
+    """
+    result = inject_reasoning_effort(payload, provider.reasoning_effort)
+    model = provider.model_name.lower()
+    code = provider.provider_code
+    host = urlsplit(provider.api_base or "").hostname
+    explicit = provider.reasoning_effort in (_VALID_REASONING_EFFORTS - {"default"})
+    enabled = bool(thinking_enabled) if task == "solve" else task == "draw"
+    if explicit:
+        enabled = True
+
+    if code == "bailian":
+        # Preserve the established task policy, including OCR/parse off and
+        # bounded solve/draw budgets. Do not enable unknown Bailian models.
+        return apply_bailian_thinking_policy(
+            result, provider_code=code, model_name=model, task=task,
+            thinking_enabled=thinking_enabled,
+        )
+
+    if code == "siliconflow" or host in {"api.siliconflow.cn", "api.siliconflow.com"}:
+        if re.fullmatch(r"(?:pro/)?qwen/qwen3-vl-(?:8b|32b)-instruct", model):
+            for key in ("enable_thinking", "thinking", "thinking_budget", "reasoning_effort"):
+                result.pop(key, None)
+        elif re.fullmatch(r"(?:pro/)?deepseek-ai/deepseek-v(?:4(?:-pro|-flash)?|3\.2)(?:-\d+)?", model):
+            result.pop("thinking", None)
+            result["enable_thinking"] = enabled
+            if not enabled:
+                result.pop("reasoning_effort", None)
+                result.pop("thinking_budget", None)
+            elif "deepseek-v4" in model:
+                effort = result.get("reasoning_effort", "max" if task == "solve" else "high")
+                result["reasoning_effort"] = "max" if effort in {"max", "xhigh"} else "high"
+            else:
+                # V3.2 has the switch but not SiliconFlow's V4 effort control.
+                result.pop("reasoning_effort", None)
+        return result
+
+    if (code == "deepseek" or host == "api.deepseek.com") and re.fullmatch(
+        r"deepseek-v4-(?:pro|flash)(?:-\d+)?", model
+    ):
+        result.pop("enable_thinking", None)
+        result["thinking"] = {"type": "enabled" if enabled else "disabled"}
+        if not enabled:
+            result.pop("reasoning_effort", None)
+        elif result.get("reasoning_effort") in {"medium", "xhigh"}:
+            result["reasoning_effort"] = "high"
+        if enabled:
+            for key in ("temperature", "top_p", "presence_penalty", "frequency_penalty"):
+                result.pop(key, None)
+        return result
+
+    is_gpt_reasoning = bool(re.match(r"^(?:gpt-[56](?:[.-]|$)|o[134](?:-|$))", model))
+    if is_gpt_reasoning or model.startswith("gpt-4") or host == "api.openai.com":
+        for key in ("enable_thinking", "thinking", "thinking_budget"):
+            result.pop(key, None)
+        if is_gpt_reasoning:
+            if task == "solve" and not explicit:
+                result["reasoning_effort"] = "high" if thinking_enabled else "medium"
+            if "max_tokens" in result:
+                limit = result.pop("max_tokens")
+                result.setdefault("max_completion_tokens", limit)
+            # Sampling controls are unnecessary for these reasoning requests.
+            for key in ("temperature", "top_p"):
+                result.pop(key, None)
+            if re.match(r"^gpt-6-astra(?:-|$)", model):
+                for key in ("logprobs", "top_logprobs"):
+                    result.pop(key, None)
+        elif model.startswith("gpt-4"):
+            result.pop("reasoning_effort", None)
+        return result
+
+    # Gemini/Claude and other transit models receive no invented thinking
+    # switch. In particular, '-high' in a model alias is not parsed or renamed.
+    return result
 
 
 @dataclass(frozen=True)

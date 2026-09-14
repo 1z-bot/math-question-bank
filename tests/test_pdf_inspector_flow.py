@@ -140,7 +140,8 @@ def test_pdf_inspector_detects_formula_loss_and_triggers_ocr_fallback():
     assert result["pages"][0]["needs_ocr"] is True
 
 
-def test_pdf_parsing_force_ocr_strategy():
+@pytest.mark.parametrize("generate_answers", [False, True])
+def test_pdf_parsing_force_ocr_strategy(generate_answers):
     """当指定 pdf_strategy="force_ocr" 时，应绕过原生提取并强制发起视觉转译。"""
     from main import DOCUMENT_TASKS, run_pdf_parsing_task
     import pymupdf as fitz
@@ -151,7 +152,7 @@ def test_pdf_parsing_force_ocr_strategy():
     pdf_bytes = doc.tobytes()
 
     with patch("main.ocr_pdf_page_image", return_value="1. 测验题 1+1=2"), \
-         patch("main.parse_paper_text_internal", return_value=[{"content": "1. 测验题 1+1=2", "answer_markdown": ""}]):
+         patch("main.parse_paper_text_internal", return_value=[{"content": "1. 测验题 1+1=2", "answer_markdown": "A"}]) as parse:
         task_id = "test-force-ocr-task"
         if DOCUMENT_TASKS.exists(task_id):
             DOCUMENT_TASKS.remove(task_id)
@@ -160,13 +161,16 @@ def test_pdf_parsing_force_ocr_strategy():
             task_id,
             pdf_bytes,
             "test.pdf",
-            generate_answers=False,
+            generate_answers=generate_answers,
             page_range=None,
             pdf_strategy="force_ocr"
         )
         task = DOCUMENT_TASKS.snapshot(task_id)
         assert task is not None
         assert task["status"] == "completed"
+        assert parse.call_args.args[1] is False
+        assert task["generate_answers"] is generate_answers
+        assert task["data"][0]["answer_markdown"] == "A"
         DOCUMENT_TASKS.remove(task_id)
 
 

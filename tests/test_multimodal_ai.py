@@ -34,15 +34,17 @@ def test_ocr_prompt_compactly_preserves_tables_and_multi_figure_anchors():
     assert len(prompt) <= 720
 
 
-def test_ocr_request_uses_resolved_multimodal_provider(tmp_path):
+@pytest.mark.parametrize("base", ["https://api.openai.com/v1", "https://vision.example/v1"])
+@pytest.mark.parametrize("model,effort", [("gpt-6-astra", "medium"), ("gpt-5.6-luna", "max")])
+def test_ocr_request_uses_resolved_multimodal_provider(tmp_path, base, model, effort):
     image_path = tmp_path / "question.png"
     image_path.write_bytes(b"fake-image-bytes")
     provider = resolve_ocr_provider(
         "zhongzhan_gpt",
         {
             "ZHONGZHAN_GPT_API_KEY": "ocr-key",
-            "ZHONGZHAN_GPT_BASE_URL": "https://vision.example/v1",
-            "ZHONGZHAN_GPT_OCR_MODEL": "gpt-5.6-luna:high",
+            "ZHONGZHAN_GPT_BASE_URL": base,
+            "ZHONGZHAN_GPT_OCR_MODEL": f"{model}:{effort}",
         },
     )
     response = MagicMock(status_code=200)
@@ -59,10 +61,10 @@ def test_ocr_request_uses_resolved_multimodal_provider(tmp_path):
 
     assert result == "识别结果 $x=1$"
     args, kwargs = mock_post.call_args
-    assert args[0] == "https://vision.example/v1/chat/completions"
-    assert kwargs["json"]["model"] == "gpt-5.6-luna"
-    assert kwargs["json"]["reasoning_effort"] == "high"
-    assert kwargs["json"]["enable_thinking"] is True
+    assert args[0] == f"{base}/chat/completions"
+    assert kwargs["json"]["model"] == model
+    assert kwargs["json"]["reasoning_effort"] == effort
+    assert "enable_thinking" not in kwargs["json"]
     image_item = kwargs["json"]["messages"][0]["content"][1]
     assert image_item["image_url"]["url"].startswith("data:image/png;base64,")
 
@@ -165,7 +167,8 @@ def test_draw_request_strips_siliconflow_provider_prefix(tmp_path):
     assert isinstance(kwargs["json"]["messages"][0]["content"], list)
 
 
-def test_draw_request_injects_configured_reasoning_effort(tmp_path):
+@pytest.mark.parametrize("model,effort", [("gpt-6-astra", "medium"), ("gpt-5.6-luna", "max")])
+def test_draw_request_injects_configured_reasoning_effort(tmp_path, model, effort):
     image_path = tmp_path / "diagram.png"
     image_path.write_bytes(b"fake-diagram-bytes")
     response = MagicMock(status_code=200)
@@ -181,14 +184,14 @@ def test_draw_request_injects_configured_reasoning_effort(tmp_path):
         with patch("mathbank.ai_http.robust_request_post", return_value=response) as mock_post:
             draw_tikz_via_high_model(
                 str(image_path),
-                "ZHONGZHAN_GPT/gpt-5.6-luna:high",
+                f"ZHONGZHAN_GPT/{model}:{effort}",
                 latex_content="三角形 ABC",
             )
 
     payload = mock_post.call_args.kwargs["json"]
-    assert payload["model"] == "gpt-5.6-luna"
-    assert payload["reasoning_effort"] == "high"
-    assert payload["enable_thinking"] is True
+    assert payload["model"] == model
+    assert payload["reasoning_effort"] == effort
+    assert "enable_thinking" not in payload
 
 
 def test_draw_request_supports_text_only_workbench_input():

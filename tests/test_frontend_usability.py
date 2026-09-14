@@ -1641,6 +1641,38 @@ global.console = { ...console, error() {} };
     assert result.returncode == 0, result.stderr
 
 
+def test_paper_pagination_scrolls_only_the_question_list():
+    source = _read(STATIC_JS_DIR / "paper.js")
+    start = source.index("    function scrollPaperQuestionStreamToTop()")
+    end = source.index("    window.retryPaperBankQuestions", start)
+    script = r'''
+const assert = require('assert');
+const root = { scrollTop: 0 };
+const preview = { scrollTop: 100 };
+const stream = { scrollTop: 2000 };
+const top = { scrollIntoView() { root.scrollTop = 367; } };
+let mounted = true;
+const document = { getElementById(id) {
+  if (id === 'paperQuestionStream') return mounted ? stream : null;
+  if (id === 'paperQuestionStreamTop') return top;
+  if (id === 'a4PaperPreviewSheet') return preview;
+  return null;
+}};
+''' + source[start:end] + r'''
+scrollPaperQuestionStreamToTop();
+assert.equal(stream.scrollTop, 0);
+assert.equal(root.scrollTop, 0, 'pagination must not shift the whole page');
+assert.equal(preview.scrollTop, 100, 'pagination must preserve the paper preview position');
+mounted = false;
+scrollPaperQuestionStreamToTop();
+assert.equal(root.scrollTop, 0);
+'''
+    node = shutil.which("node")
+    assert node, "Node.js is required for the frontend executable regression"
+    result = subprocess.run([node, "-e", script], text=True, capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
 def test_paper_selected_stream_paginates_with_full_cart_indexes_and_total_counts():
     paper_source = _read(STATIC_JS_DIR / "paper.js")
     state_start = paper_source.index("function clampPaperStreamPage")

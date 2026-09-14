@@ -1103,15 +1103,8 @@
 
     function scrollPaperQuestionStreamToTop() {
         const stream = document.getElementById('paperQuestionStream');
+        // Keep pagination inside the list: scrollIntoView also scrolls the page's ancestors.
         if (stream) stream.scrollTop = 0;
-        const top = document.getElementById('paperQuestionStreamTop');
-        if (top && typeof top.scrollIntoView === 'function') {
-            try {
-                top.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            } catch (error) {
-                top.scrollIntoView();
-            }
-        }
     }
 
     window.retryPaperBankQuestions = async function () {

@@ -112,7 +112,7 @@ def test_all_text_ai_routes_parse_models_with_the_shared_effort_rules():
 
     assert "parse_effort=False" not in main_source
     assert "robust_request_post" not in main_source
-    assert "inject_reasoning_effort" in main_source
+    assert "apply_model_thinking_policy" in main_source
 
 
 def test_bailian_model_presets_are_current_and_task_specific():

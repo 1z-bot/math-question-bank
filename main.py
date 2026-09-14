@@ -92,8 +92,7 @@ from mathbank.ai_http import (
 )
 from mathbank.ai_providers import (
     MultimodalProviderConfig,
-    apply_bailian_thinking_policy,
-    inject_reasoning_effort,
+    apply_model_thinking_policy,
     resolve_draw_provider,
     resolve_ocr_fallbacks,
     resolve_ocr_provider,
@@ -847,11 +846,9 @@ def ocr_via_provider(
         "stream": False
     }
 
-    payload = inject_reasoning_effort(payload, provider.reasoning_effort)
-    payload = apply_bailian_thinking_policy(
+    payload = apply_model_thinking_policy(
         payload,
-        provider_code=provider.provider_code,
-        model_name=provider.model_name,
+        provider=provider,
         task="ocr",
     )
 
@@ -920,11 +917,9 @@ def request_tikz_completion(provider, content_payload, *, timeout: int = 120) ->
         "messages": [{"role": "user", "content": content_payload}],
         "stream": False,
     }
-    payload = inject_reasoning_effort(payload, provider.reasoning_effort)
-    payload = apply_bailian_thinking_policy(
+    payload = apply_model_thinking_policy(
         payload,
-        provider_code=provider.provider_code,
-        model_name=provider.model_name,
+        provider=provider,
         task="draw",
     )
     response = post_chat_completion(
@@ -1193,10 +1188,10 @@ def ai_solve(
     ocr_result: str = Form(""),
     custom_prompt: str = Form(""),
     thinking: str = Form("enabled"),
-    model: str = Form("deepseek-v4-pro"),
+    model: str = Form(""),
     stream: str = Form("false")
 ):
-    provider = resolve_text_provider(model)
+    provider = resolve_text_provider(model or os.getenv("PREFER_SOLVE_MODEL") or "deepseek-v4-pro")
     api_key = provider.api_key
     api_base = provider.api_base
     model_name = provider.model_name
@@ -1222,8 +1217,6 @@ def ai_solve(
         # Keep the legacy fallback cap for older Bailian models. Current
         # Qwen3.7/3.8 requests are converted below to max_completion_tokens.
         max_output_tokens = 8192 if provider.provider_code == "bailian" else 16384
-            
-        explicit_effort = provider.reasoning_effort
 
         data = {
             "model": model_name,
@@ -1234,58 +1227,14 @@ def ai_solve(
             "max_tokens": max_output_tokens
         }
         
-        # Configure thinking parameter if specified (only for DeepSeek models/endpoints, excluding legacy models that don't support it)
-        is_deepseek = ("deepseek" in model_name.lower() or "deepseek" in api_base.lower()) and "deepseek-chat" not in model_name.lower() and "deepseek-reasoner" not in model_name.lower()
-        is_siliconflow = api_base and "siliconflow" in api_base.lower()
-        
-        is_bailian = provider.provider_code == "bailian"
-        if is_bailian:
-            # Connect the front-end '深度思考' toggle button to Alibaba Bailian's 'enable_thinking' API parameter
-            if thinking == "enabled":
-                data["enable_thinking"] = True
-            else:
-                data["enable_thinking"] = False
-
-        if is_siliconflow:
-            # Native R1 models on SiliconFlow do not use enable_thinking (they are always reasoning)
-            # Other models (V3, V4 Pro, Flash, etc.) use enable_thinking and reasoning_effort
-            if "r1" not in model_name.lower():
-                is_deepseek = False  # Bypass OpenAI standard thinking parameter
-                if thinking == "enabled":
-                    data["enable_thinking"] = True
-                    if "v4" in model_name.lower():
-                        data["reasoning_effort"] = "max"
-                else:
-                    data["enable_thinking"] = False
-
-        # Support OpenAI reasoning models (gpt-5, o1, o3, etc.) on transit APIs
-        is_openai_reasoning = ("gpt-5" in model_name.lower() or "o1" in model_name.lower() or "o3" in model_name.lower())
-        if is_openai_reasoning:
-            is_deepseek = False  # Bypass DeepSeek thinking parameter
-            if thinking == "enabled":
-                data["reasoning_effort"] = "high"    # Maximum mathematical depth and verification
-            else:
-                data["reasoning_effort"] = "medium"  # Balanced speed and analytical quality
-        
-        if is_deepseek and thinking in ["enabled", "disabled"]:
-            data["thinking"] = {"type": thinking}
-            
-        # The 7:3 model selector may provide an explicit allowlisted effort.
-        # Apply it last so it intentionally overrides the generic toggle.
-        data = inject_reasoning_effort(data, explicit_effort)
-        data = apply_bailian_thinking_policy(
+        data["temperature"] = 0.2
+        data = apply_model_thinking_policy(
             data,
-            provider_code=provider.provider_code,
-            model_name=model_name,
+            provider=provider,
             task="solve",
             thinking_enabled=thinking == "enabled",
         )
-            
-        # When thinking mode is active, temperature is ignored/deprecated by DeepSeek.
-        # But when thinking is disabled or non-DeepSeek model, specify it.
-        if not is_deepseek or thinking == "disabled":
-            data["temperature"] = 0.2
-            
+
         if stream == "true":
             def event_generator():
                 data["stream"] = True
@@ -3856,17 +3805,9 @@ def ai_classify(content: str = Form(...)):
             "max_tokens": 512
         }
         
-        # Only add thinking if using a DeepSeek model or DeepSeek base URL, excluding legacy models that don't support it
-        is_deepseek = ("deepseek" in model_name.lower() or "deepseek" in api_base.lower()) and "deepseek-chat" not in model_name.lower() and "deepseek-reasoner" not in model_name.lower()
-        if is_deepseek and provider.reasoning_effort in {None, "default"}:
-            data["thinking"] = {
-                "type": "disabled"
-            }
-        data = inject_reasoning_effort(data, provider.reasoning_effort)
-        data = apply_bailian_thinking_policy(
+        data = apply_model_thinking_policy(
             data,
-            provider_code=provider.provider_code,
-            model_name=model_name,
+            provider=provider,
             task="classify",
         )
         
@@ -4041,16 +3982,9 @@ def parse_paper_text_internal(
         "max_tokens": max_output_tokens
     }
     
-    is_deepseek = ("deepseek" in model_name.lower() or "deepseek" in api_base.lower()) and "deepseek-chat" not in model_name.lower() and "deepseek-reasoner" not in model_name.lower()
-    if is_deepseek and provider.reasoning_effort in {None, "default"}:
-        data["thinking"] = {
-            "type": "disabled"
-        }
-    data = inject_reasoning_effort(data, provider.reasoning_effort)
-    data = apply_bailian_thinking_policy(
+    data = apply_model_thinking_policy(
         data,
-        provider_code=provider.provider_code,
-        model_name=model_name,
+        provider=provider,
         task="parse",
     )
     
@@ -4160,17 +4094,9 @@ def ai_parse_paper(
             "max_tokens": max_output_tokens
         }
         
-        # Only add thinking if using a DeepSeek model or DeepSeek base URL, excluding legacy models that don't support it
-        is_deepseek = ("deepseek" in model_name.lower() or "deepseek" in api_base.lower()) and "deepseek-chat" not in model_name.lower() and "deepseek-reasoner" not in model_name.lower()
-        if is_deepseek and provider.reasoning_effort in {None, "default"}:
-            data["thinking"] = {
-                "type": "disabled"
-            }
-        data = inject_reasoning_effort(data, provider.reasoning_effort)
-        data = apply_bailian_thinking_policy(
+        data = apply_model_thinking_policy(
             data,
-            provider_code=provider.provider_code,
-            model_name=model_name,
+            provider=provider,
             task="parse",
         )
         
@@ -4886,13 +4812,9 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
                         ],
                         "temperature": 0.3
                     }
-                    payload_data = inject_reasoning_effort(
-                        payload_data, provider.reasoning_effort
-                    )
-                    payload_data = apply_bailian_thinking_policy(
+                    payload_data = apply_model_thinking_policy(
                         payload_data,
-                        provider_code=provider.provider_code,
-                        model_name=model_name,
+                        provider=provider,
                         task="paper_selection",
                     )
                     response = post_chat_completion(
@@ -5342,7 +5264,7 @@ def run_pdf_parsing_task(
             paper_title = auto_title
         parsed_questions = parse_paper_text_internal(
             full_latex_content,
-            generate_answers,
+            False,  # Extract original answers only; the frontend solves missing answers.
         )
         DOCUMENT_TASKS.check_cancelled(task_id)
         final_questions = post_process_pdf_parsed_questions(
@@ -5356,6 +5278,7 @@ def run_pdf_parsing_task(
             task_id,
             log="完成！已为您提取并拆分全部题目卡片。",
             data=final_questions,
+            generate_answers=generate_answers,
             page_images=list(page_urls),
             temp_assets=list(temp_assets),
             document_type="pdf",
@@ -6110,17 +6033,9 @@ def explain_latex_compile_error(log_text: str, tex_content: str) -> dict:
         "temperature": 0.1,
         "max_tokens": 1200,
     }
-    is_deepseek = (
-        "deepseek" in provider.model_name.lower()
-        or "deepseek" in (provider.api_base or "").lower()
-    ) and provider.model_name not in {"deepseek-chat", "deepseek-reasoner"}
-    if is_deepseek and provider.reasoning_effort in {None, "default"}:
-        payload["thinking"] = {"type": "disabled"}
-    payload = inject_reasoning_effort(payload, provider.reasoning_effort)
-    payload = apply_bailian_thinking_policy(
+    payload = apply_model_thinking_policy(
         payload,
-        provider_code=provider.provider_code,
-        model_name=provider.model_name,
+        provider=provider,
         task="latex_diagnostic",
     )
 

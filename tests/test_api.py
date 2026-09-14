@@ -957,3 +957,16 @@ def test_version_and_update_check_api(client):
         assert "macOS" in data_update["assets"]
         assert "Windows" in data_update["assets"]
         assert data_update["assets"]["macOS"]["size_mb"] == 10.0
+
+
+def test_solve_without_model_uses_saved_solver_and_shared_prompt(client):
+    from mathbank.prompts import build_ai_solve_prompts
+
+    with patch.dict(os.environ, {"PREFER_SOLVE_MODEL": "DEEPSEEK/deepseek-chat", "DEEPSEEK_API_KEY": "fake"}), patch("main.post_chat_completion") as post:
+        post.return_value.json.return_value = {"choices": [{"message": {"content": "answer"}}]}
+        response = client.post("/api/ai/solve", data={"content": "求 1+1", "question_type": "fill_in_blank"}, headers={"X-Local-Token": LOCAL_TOKEN})
+        assert response.status_code == 200
+        payload = post.call_args.args[1]
+        assert payload["model"] == "deepseek-chat"
+        system, user = build_ai_solve_prompts("fill_in_blank", "求 1+1")
+        assert payload["messages"] == [{"role": "system", "content": system}, {"role": "user", "content": user}]

@@ -164,7 +164,6 @@ def test_reasoning_effort_is_allowlisted_normalized_and_pure(effort):
     assert result == {
         **original,
         "reasoning_effort": effort,
-        "enable_thinking": True,
     }
     assert result is not original
     assert "reasoning_effort" not in original

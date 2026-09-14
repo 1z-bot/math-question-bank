@@ -2511,6 +2511,10 @@
                         document.getElementById('importLoadingState').classList.add('hidden');
                         document.getElementById('parsedQuestionsWrapper').classList.remove('hidden');
                         
+                        if (task.document_type === 'pdf' && task.generate_answers === true) {
+                            processAsyncAnswerGeneration(parsedQuestionsData, parsedQuestionsGeneration);
+                        }
+
                         runBtn.disabled = false;
                         runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>一键 AI 智能拆解并关联</span>';
                     } else if (task.status === 'cancelled') {
@@ -5546,6 +5550,11 @@
                 formData.append('content', q.content || '');
                 formData.append('question_type', q.question_type || 'detailed_answer');
                 formData.append('stream', 'false');
+                if (typeof systemPreferSolveModel !== 'undefined') {
+                    formData.append('model', systemPreferSolveModel);
+                }
+                const thinkingToggle = document.getElementById('aiThinkingToggle');
+                formData.append('thinking', thinkingToggle && thinkingToggle.checked ? 'enabled' : 'disabled');
 
                 const res = await fetch('/api/ai/solve', {
                     method: 'POST',
@@ -5596,8 +5605,8 @@
             const needAnswersIndices = [];
             questions.forEach((q, idx) => {
                 const ans = (q.answer_markdown || '').trim();
-                // 仅对未包含解答且未被打上原版提取标记的题目自动推导
-                if (!ans || (!ans.includes('[EXTRACTED_ORIGINAL]') && ans.length < 5)) {
+                // 保留所有已有答案，包括 A、2 等简短原版答案。
+                if (!ans) {
                     needAnswersIndices.push(idx);
                 }
             });
@@ -5623,6 +5632,7 @@
             // 控制并发池 (Concurrency Limit: 3)
             const MAX_CONCURRENCY = 3;
             let finishedCount = 0;
+            let failedCount = 0;
             let currentPointer = 0;
 
             async function worker() {
@@ -5645,6 +5655,11 @@
                         formData.append('content', q.content || '');
                         formData.append('question_type', q.question_type || 'detailed_answer');
                         formData.append('stream', 'false');
+                        if (typeof systemPreferSolveModel !== 'undefined') {
+                            formData.append('model', systemPreferSolveModel);
+                        }
+                        const thinkingToggle = document.getElementById('aiThinkingToggle');
+                        formData.append('thinking', thinkingToggle && thinkingToggle.checked ? 'enabled' : 'disabled');
 
                         const res = await fetch('/api/ai/solve', {
                             method: 'POST',
@@ -5655,6 +5670,7 @@
                         });
                         if (!requestIsCurrent()) return;
 
+                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
                         if (res.ok) {
                             const data = await res.json();
                             if (!requestIsCurrent()) return;
@@ -5670,10 +5686,14 @@
                                     const btn = card.querySelector('.card-solve-btn');
                                     if (btn) btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles text-indigo-500"></i><span>重生成解析</span>';
                                 }
+                            } else {
+                                throw new Error(data.message || '生成解答失败');
                             }
                         }
                     } catch (e) {
                         if (!requestIsCurrent()) return;
+                        failedCount++;
+                        appendImportLog(`第 ${taskIdx + 1} 题解析生成失败：${e.message}，可在题目卡片中重试。`, 'warning');
                         console.error(`第 ${taskIdx + 1} 题推导解答失败:`, e);
                         if (card) {
                             renderParsedCardPreview(card, q.content || '', q.answer_markdown || '');
@@ -5688,7 +5708,7 @@
             }
             await Promise.all(workers);
             if (!requestIsCurrent()) return;
-            appendImportLog(`🎉 试卷所有空缺题目（共 ${needAnswersIndices.length} 题）的 AI 解答推导全部完成！`, 'success');
+            appendImportLog(`AI 解答生成结束：成功 ${finishedCount} 题，失败 ${failedCount} 题。`, failedCount ? 'warning' : 'success');
         }
 
         window.generateSingleAnswer = generateSingleAnswer;

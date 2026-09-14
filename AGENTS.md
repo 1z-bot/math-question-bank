@@ -95,6 +95,7 @@
 - **批量图片上传 (`/api/upload/batch`)**：拖拽上传多张试卷截图，限制 1–20 张、单张 10MB、总计 50MB，使用 Pillow 验证真实图片。
 - **TeX 安全预处理**：只接受单文件 `.tex`（≤5MB），展开无参/单参简单宏，规范 `choices` 结构，锁定 TeX 数学环境（`$...$`、`$$...$$` 等）。
 - **AI 智能拆卷 (`/api/ai/parse-paper`) 与两阶段解答**：阶段一完成切片、分类与提取；解析格式统一经 `mathbank.ai_json.parse_ai_json` 处理。勾选自动生成解答时，阶段二由前端并发队列（上限 3）调用 `/api/ai/solve` 推导无答案题目。
+- **PDF 解答生成一致性**：PDF 拆卷阶段仅提取原版答案；任务结果携带 `generate_answers`，前端在勾选时以最多 3 并发逐题调用 `/api/ai/solve` 补齐空答案，任何非空原版答案（含单字母/数字）均保留。PDF 卡片与自动补全使用单题编辑器相同的解题模型、思考开关和 `build_ai_solve_prompts`；接口未传模型时读取 `PREFER_SOLVE_MODEL`。批量失败须逐题提示并汇总真实成功/失败数，不得误报全部成功。
 - **拆卷状态高亮与重置**：拆卷日志仅当前执行步骤显示高亮 (`aria-current="step"`)，进入下一阶段自动转为灰色完成态。提供“一键清除”确认重置操作。
 
 ### 3.6 存储空间自愈
@@ -134,6 +135,7 @@
 - **逐卷大题排序**：常规卷与日常小练的大题标题提供上移／下移，操作只改变该卷 `section_order`，保留各题型内部的购物车顺序。顺序随 LocalStorage 草稿及 `Paper.metadata_json` 保存，详情以 `section_order` 返回；载入无此字段的旧卷必须清空上一卷顺序。网页、全部导出端点（含历史卷快捷 PDF）共用该顺序，缺失／新增题型按默认规则补齐，重复及非字符串项规范化后不得漏题。移除后重加的题型恢复已存位置；高考模板忽略自定义顺序，切回普通模板可恢复。异步保存／导出的卷面快照必须包含模板及大题顺序，等待期间更改顺序应停止旧请求。
 - **A4 Live Preview 渲染引擎**：结合 KaTeX + 动态 DOM 模拟 A4 试卷（210mm x 297mm）。支持密封线 (`\secret`)、大/副标题双向 WYSIWYG 编辑、注意事项 (`notice`) 显隐控制与解答题留白调控。
 - **题目流双页签分页**：全库试题必须使用 `GET /api/questions?page=&page_size=15&sort=desc` 的服务端分页，并以 `AbortController` 和递增请求序号保证最后一次筛选或翻页请求胜出；页签总数读取服务端 `total`，筛选变化回到全库第 1 页，加载中与失败重试状态必须明确，失败时不得把未知总数显示为 0。已选试题按完整购物车顺序在前端每页 15 题，各页签分别保留并校正当前页；购物车题目必须通过 `GET /api/paper/questions?ids=` 每批最多 50 题补载，并在每次进入组卷工作台以及保存、PDF、Word、LaTeX 导出前对完整购物车 ID 重新核验，使内存缓存不能掩盖同一会话内已删除题目。批量响应写入 `questionsMap` 前必须保护请求发出后产生的较新插图布局。服务端成功响应确认不存在的 ID 与网络或服务异常导致的“暂未核验”必须分开记录：两者都暂停完整卷面预览、保存与导出并允许重试，但“只移除失效题”只能删除已确认不存在的题目，不得删除暂未核验题目。跨页上移/下移必须操作完整购物车索引并让当前页跟随被移动题目。保存与各导出动作必须采用单次执行门，并在异步补载或运行组件准备后复核完整购物车快照，卷面已变化时停止旧请求。四个试卷导出端点必须在进入 LaTeX/PDF/Word 构建前统一拒绝空题目列表、无效或重复 ID 以及已删除或不存在的 ID，并返回 400，严禁静默跳过后生成残缺试卷。
+- **题目流滚动隔离**：翻页、切换全库／已选页签及筛选后回到列表顶部时，只设置 `paperQuestionStream.scrollTop = 0`；不得对列表顶部调用 `scrollIntoView()`，避免连带滚动外层页面、遮住顶部配置栏并在底部露出空白。右侧试卷预览的滚动位置必须保持不变。
 - **留白连续微调**：单题留白微调控制条必须绝对锚定在可伸缩留白区域顶部且不参与文档流；增减留白优先只改变区域底边，不得让纯 UI 控件改变网页预览分页预算。重绘前后按题目 ID 恢复控制条的视口锚点与原按钮焦点，以覆盖嵌图在 0 cm 切换位置或临界换页；数值槽和四个增减按钮宽度保持稳定，支持鼠标原位连续点击。
 - **面板架构**：右侧控制面板静态固定，下方 A4 画布具备独立滚动条，避免重叠。
 - **拖拽与管理**：支持 HTML5 原拖拽试题卡片排序，具备侧边栏折叠及已保存试卷的数据库存档与载入管理。
@@ -171,9 +173,10 @@
 ## 4. 外部 API 接入规范
 - **密钥与鉴权**：读取 `.env` 密钥，修改类接口必须携带 `X-Local-Token` 头部。
 - **模型配置**：
+  - **思考参数按供应商与型号隔离**：所有 OCR（含 PDF 页面）、绘图、解答（含流式）、拆卷、分类、AI 选题与 LaTeX 诊断统一通过 `mathbank.ai_providers.apply_model_thinking_policy` 构造参数。`inject_reasoning_effort` 只添加明确选中的 `reasoning_effort`，禁止连带添加 `enable_thinking`。已识别 GPT 推理型号在官方与中转站均不发送 `enable_thinking` / `thinking` / `thinking_budget`，使用 `max_completion_tokens` 并省略采样参数；Astra 还省略 `logprobs` / `top_logprobs`。DeepSeek 官方 V4 使用 `thinking.type`，硅基流动已识别 DeepSeek V4/V3.2 使用 `enable_thinking`，关闭时不携带推理强度；硅基流动 Qwen3-VL-8B/32B-Instruct 不添加思考开关。百炼当前 Qwen 保留以下任务策略。其他自定义型号不猜测思考开关；中转站 Gemini 等别名（包括 `-high` / `-medium`）原样传递，不剥离后缀或静默改名。专项验证须覆盖官方 Astra、官方/中转站 Luna、两种 DeepSeek 接入方式、百炼与 Instruct 的请求参数隔离，模拟请求通过不能替代付费 API 实测。
   - OCR 首选阿里百炼 `qwen3.7-flash` 或硅基流动 `Qwen/Qwen3-VL-8B-Instruct`（中转站推荐 `gpt-5.6-luna`）。
   - 阿里百炼预设按任务隔离：OCR、拆卷与分类默认 `qwen3.7-flash`，解答与绘图默认 `qwen3.7-plus`，`qwen3.8-max` 仅作为高性能可选项；旧型号不再列为预设，但既有配置与自定义模型必须继续可见且不得被静默改写。
-  - **阿里百炼思考策略隔离**：仅对 `provider_code == "bailian"` 的 Qwen3.7/3.8 生效。OCR、拆卷、分类、AI 选题和 LaTeX 诊断显式关闭思考；解答服从前端开关；TikZ 绘图显式开启思考。Qwen3.7 使用 `thinking_budget`，Qwen3.8 Max 使用 `reasoning_effort=medium`，两者禁止同时发送；当前型号使用 `max_completion_tokens`，不得改变 DeepSeek、硅基流动和中转站载荷。
+  - **阿里百炼思考策略隔离**：仅对 `provider_code == "bailian"` 的 Qwen3.7/3.8 生效。OCR、拆卷、分类、AI 选题和 LaTeX 诊断显式关闭思考；解答服从前端开关；TikZ 绘图显式开启思考。Qwen3.7 使用 `thinking_budget`，Qwen3.8 Max 使用 `reasoning_effort=medium`，两者禁止同时发送；当前型号使用 `max_completion_tokens`，百炼专属规则不得应用到其他供应商。
   - 解答 (`PREFER_SOLVE_MODEL`)、拆卷 (`PREFER_PARSE_MODEL`)、分类 (`PREFER_CLASSIFY_MODEL`) 与绘图 (`PREFER_DRAW_MODEL`) 可单独配置。
 - **融合题自动分类优先级**：单题自动定位与拆卷分类共用 `mathbank.prompts.CLASSIFICATION_PRIORITY_RULE`。若一道题实际融合多个教材模块，按当前大纲从上到下的顺序选择最靠后的模块：先比较学段顺序，同一学段再比较章节顺序；仅作背景且解题无需使用的内容不参与候选。
 - **单题教材分类与题型确认边界**：`POST /api/ai/classify` 返回推荐学段、章节及粗粒度 `question_form`。后端硬规则优先：题干出现 `\begin{choices}` 判为 `choice`，出现 `\fillin` 判为 `fill_in_blank`；其余才采用 AI 的 `choice` / `fill_in_blank` / `detailed_answer` / `unknown` 建议。AI 严禁区分单选与多选；前端收到 `choice` 时必须由用户手动确认 `single_choice` 或 `multi_choice` 后才能保存，`unknown` 保留当前题型，禁止用缺失或未知值默认覆盖为解答题。
