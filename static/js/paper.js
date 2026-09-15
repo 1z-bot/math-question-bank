@@ -971,6 +971,9 @@
 
         if (key === 'title' || key === 'subtitle') {
             syncCanvasHeaderMeta(key, value);
+            if (typeof window.scheduleActiveA4Repagination === 'function') {
+                window.scheduleActiveA4Repagination();
+            }
         } else {
             window.renderPaperCanvas();
         }
@@ -1538,6 +1541,16 @@
         const container = document.getElementById('paperCanvasSection');
         if (!container) return;
 
+        if (window.activeA4PaginationResizeObserver) {
+            window.activeA4PaginationResizeObserver.disconnect();
+            window.activeA4PaginationResizeObserver = null;
+        }
+        if (window.activeA4PaginationFrame && typeof cancelAnimationFrame === 'function') {
+            cancelAnimationFrame(window.activeA4PaginationFrame);
+        }
+        window.activeA4PaginationFrame = null;
+        window.scheduleActiveA4Repagination = null;
+
         // 保存更新前的 A4 画布与外层 Section 滚动位置，解决重绘导致的视口跳回第一页问题
         const oldSheet = document.getElementById('a4PaperPreviewSheet');
         const savedSheetScrollTop = oldSheet ? oldSheet.scrollTop : 0;
@@ -1735,6 +1748,45 @@
             } catch (e) { }
         }
         initializeAutoFigureSizing(sheet);
+        if (sheet && !cartIncomplete) {
+            rebalanceA4PaperPages(sheet, meta, totalCount, totalScore);
+
+            const repaginateAfterLayoutChange = () => {
+                if (!sheet.isConnected) {
+                    if (window.activeA4PaginationResizeObserver) {
+                        window.activeA4PaginationResizeObserver.disconnect();
+                        window.activeA4PaginationResizeObserver = null;
+                    }
+                    return;
+                }
+                if (window.activeA4PaginationFrame) return;
+                if (typeof requestAnimationFrame === 'function') {
+                    window.activeA4PaginationFrame = requestAnimationFrame(() => {
+                        window.activeA4PaginationFrame = null;
+                        rebalanceA4PaperPages(sheet, meta, totalCount, totalScore);
+                    });
+                } else {
+                    rebalanceA4PaperPages(sheet, meta, totalCount, totalScore);
+                }
+            };
+            window.scheduleActiveA4Repagination = repaginateAfterLayoutChange;
+
+            if (typeof ResizeObserver !== 'undefined') {
+                const resizeObserver = new ResizeObserver(repaginateAfterLayoutChange);
+                resizeObserver.observe(sheet);
+                sheet.querySelectorAll('.paper-page-block').forEach(block => resizeObserver.observe(block));
+                window.activeA4PaginationResizeObserver = resizeObserver;
+            }
+            sheet.querySelectorAll('img').forEach(image => {
+                if (!image.complete) {
+                    image.addEventListener('load', repaginateAfterLayoutChange, { once: true });
+                    image.addEventListener('error', repaginateAfterLayoutChange, { once: true });
+                }
+            });
+            if (document.fonts && document.fonts.ready) {
+                document.fonts.ready.then(repaginateAfterLayoutChange).catch(() => {});
+            }
+        }
 
         // 恢复更新前的滚动位置，保证调排版/留白/格式时在原视口位置零跳跃渲染
         const restoreScroll = () => {
@@ -1800,7 +1852,7 @@
 
             ${isExamType ? `
                 <div class="text-[12px] text-center font-serif text-slate-800 mb-4">
-                    本试卷共 ${totalPages} 页，${totalCount} 题。全卷满分 ${totalScore} 分。考试用时 120 分钟。
+                    本试卷共 <span data-paper-total-pages>${totalPages}</span> 页，${totalCount} 题。全卷满分 ${totalScore} 分。考试用时 120 分钟。
                 </div>
 
                 <!-- Standard LaTeX Notice Block with Interactive Toggle -->
@@ -1831,10 +1883,152 @@
         `;
     }
 
+    function paginatePaperBlocksByHeight(blocks, firstPageLimit, laterPageLimit) {
+        const pages = [];
+        let currentPage = [];
+        let currentHeight = 0;
+
+        blocks.forEach((block, index) => {
+            const pageLimit = pages.length === 0 ? firstPageLimit : laterPageLimit;
+            const nextBlock = blocks[index + 1];
+            const keepWithNextHeight = (
+                block.type === 'section_title'
+                && nextBlock
+                && nextBlock.type === 'question'
+                && nextBlock.qType === block.qType
+            ) ? block.height + nextBlock.height : block.height;
+            const wouldOverflow = currentHeight + block.height > pageLimit;
+            const wouldOrphanHeading = currentHeight + keepWithNextHeight > pageLimit;
+            const headingPairFitsLaterPage = (
+                block.type === 'section_title'
+                && currentPage.length === 0
+                && pages.length === 0
+                && keepWithNextHeight > firstPageLimit
+                && keepWithNextHeight <= laterPageLimit
+            );
+            if (headingPairFitsLaterPage) {
+                pages.push([]);
+            }
+            const keepOversizeWithHeading = (
+                block.type === 'question'
+                && block.height > laterPageLimit
+                && currentPage.length === 1
+                && currentPage[0].type === 'section_title'
+                && currentPage[0].qType === block.qType
+            );
+
+            if (currentPage.length > 0 && !keepOversizeWithHeading && (wouldOverflow || wouldOrphanHeading)) {
+                pages.push(currentPage);
+                currentPage = [];
+                currentHeight = 0;
+            }
+
+            currentPage.push(block);
+            currentHeight += block.height;
+        });
+
+        if (currentPage.length > 0) pages.push(currentPage);
+        return pages;
+    }
+    window.paginatePaperBlocksByHeight = paginatePaperBlocksByHeight;
+
+    function getPaperBlockOuterHeight(element) {
+        const style = window.getComputedStyle(element);
+        const marginTop = parseFloat(style.marginTop) || 0;
+        const marginBottom = parseFloat(style.marginBottom) || 0;
+        return Math.ceil(element.getBoundingClientRect().height + marginTop + marginBottom);
+    }
+
+    function createMeasuredA4Page(meta, totalCount, totalScore, pageIndex, totalPages, pageLimit, blocks) {
+        const page = document.createElement('div');
+        const hasOversizeBlock = blocks.some(block => block.height > pageLimit);
+        page.className = 'a4-paper-sheet w-full max-w-[794px] h-[1123px] bg-white text-slate-900 px-10 py-12 shadow-2xl rounded-sm border border-slate-300 font-serif leading-relaxed relative overflow-hidden select-none mb-8'
+            + (hasOversizeBlock ? ' a4-paper-sheet--expanded' : '');
+        page.dataset.paperPageIndex = String(pageIndex);
+        page.dataset.paperPageExpanded = hasOversizeBlock ? 'true' : 'false';
+        page.innerHTML = `
+            ${pageIndex === 0 ? `<div class="paper-page-header">${renderA4Header(meta, totalCount, totalScore, totalPages)}</div>` : ''}
+            ${hasOversizeBlock ? `
+                <div class="paper-oversize-notice" role="status">
+                    本页题目超过单页高度，预览已自动扩展以完整显示；导出时由排版引擎继续分页。
+                </div>
+            ` : ''}
+            <div class="paper-page-content space-y-1.5 text-[13px]"></div>
+            <div class="paper-page-footer absolute bottom-5 left-0 right-0 text-center text-xs font-serif text-slate-700 tracking-wider">
+                数学 &nbsp; 第 ${pageIndex + 1} 页 (共 ${totalPages} 页)
+            </div>
+        `;
+        return page;
+    }
+
+    function rebalanceA4PaperPages(sheet, meta, totalCount, totalScore) {
+        if (!sheet || !sheet.querySelectorAll) return;
+        const blockNodes = Array.from(sheet.querySelectorAll('.paper-page-block'));
+        const firstPage = sheet.querySelector('.a4-paper-sheet');
+        const firstContent = firstPage ? firstPage.querySelector('.paper-page-content') : null;
+        const firstFooter = firstPage ? firstPage.querySelector('.paper-page-footer') : null;
+        if (!blockNodes.length || !firstPage || !firstContent || !firstFooter) return;
+
+        const pageRect = firstPage.getBoundingClientRect();
+        const contentRect = firstContent.getBoundingClientRect();
+        const footerRect = firstFooter.getBoundingClientRect();
+        const pageStyle = window.getComputedStyle(firstPage);
+        const paddingTop = parseFloat(pageStyle.paddingTop) || 0;
+        const footerGap = 12;
+        const firstPageLimit = Math.max(120, Math.floor(footerRect.top - contentRect.top - footerGap));
+        const laterPageLimit = Math.max(120, Math.floor(footerRect.top - pageRect.top - paddingTop - footerGap));
+        const measuredBlocks = blockNodes.map(node => ({
+            node,
+            type: node.dataset.paperBlockType || 'question',
+            qType: node.dataset.paperBlockQtype || '',
+            height: getPaperBlockOuterHeight(node)
+        }));
+        const pages = paginatePaperBlocksByHeight(measuredBlocks, firstPageLimit, laterPageLimit);
+        if (!pages.length) return;
+
+        const savedScrollTop = sheet.scrollTop;
+        const oldPages = Array.from(sheet.querySelectorAll(':scope > .a4-paper-sheet'));
+        const existingHeader = firstPage.querySelector('.paper-page-header');
+        const newPages = [];
+        pages.forEach((blocks, pageIndex) => {
+            const pageLimit = pageIndex === 0 ? firstPageLimit : laterPageLimit;
+            const page = createMeasuredA4Page(
+                meta,
+                totalCount,
+                totalScore,
+                pageIndex,
+                pages.length,
+                pageLimit,
+                blocks
+            );
+            sheet.appendChild(page);
+            newPages.push(page);
+        });
+
+        if (existingHeader && newPages[0]) {
+            const generatedHeader = newPages[0].querySelector('.paper-page-header');
+            if (generatedHeader) generatedHeader.replaceWith(existingHeader);
+            const totalPagesNode = existingHeader.querySelector('[data-paper-total-pages]');
+            if (totalPagesNode) totalPagesNode.textContent = String(pages.length);
+        }
+
+        pages.forEach((blocks, pageIndex) => {
+            const content = newPages[pageIndex].querySelector('.paper-page-content');
+            const pageLimit = pageIndex === 0 ? firstPageLimit : laterPageLimit;
+            blocks.forEach(block => {
+                block.node.classList.toggle('paper-page-block--oversize', block.height > pageLimit);
+                content.appendChild(block.node);
+            });
+        });
+        oldPages.forEach(page => page.remove());
+        sheet.scrollTop = savedScrollTop;
+    }
+    window.rebalanceA4PaperPages = rebalanceA4PaperPages;
+
     function generateA4PaperPagesHtml(cart, meta, totalCount, totalScore) {
         if (cart.length === 0) {
             return `
-                <div class="a4-paper-sheet w-full max-w-[794px] min-h-[1123px] bg-white text-slate-900 px-10 py-12 shadow-2xl rounded-sm border border-slate-300 font-serif leading-relaxed relative overflow-hidden select-none">
+                <div class="a4-paper-sheet w-full max-w-[794px] h-[1123px] bg-white text-slate-900 px-10 py-12 shadow-2xl rounded-sm border border-slate-300 font-serif leading-relaxed relative overflow-hidden select-none">
                     ${renderA4Header(meta, totalCount, totalScore, 1)}
                     <div class="text-center py-24 text-slate-400 font-sans text-xs">暂无试题数据，请在左侧点击“加入试卷”添加题目</div>
                     <div class="absolute bottom-5 left-0 right-0 text-center text-xs font-serif text-slate-700 tracking-wider">数学 &nbsp; 第 1 页 (共 1 页)</div>
@@ -1926,8 +2120,7 @@
                                 class="min-h-[44px] min-w-[44px] px-2 rounded-lg text-xs font-sans text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-default" aria-label="下移${typeLabel}大题" title="下移整个大题">↓ 下移</button>
                         </div>`}
                     </div>
-                `,
-                estHeight: isExam19 ? 40 : Math.max(56, Math.ceil(secHeaderText.length / 38) * 20 + 16)
+                `
             });
 
             items.forEach((item, subIdx) => {
@@ -2089,78 +2282,36 @@
                     </div>
                 `;
 
-                let estH = 75;
-                if (writtenType) {
-                    const solutionHeight = isSolSpaceEmbedded
-                        ? Math.max(Math.round(solSpaceCm * 35), figureMetrics.blockHeight, 180)
-                        : Math.round(solSpaceCm * 35);
-                    estH = 120 + solutionHeight;
-                    if (figureMetrics.count > 0 && !isSolSpaceEmbedded) {
-                        estH += figureMetrics.blockHeight;
-                    }
-                } else if (figureMetrics.count > 0) {
-                    estH += figureMetrics.blockHeight;
-                }
-                if (rawContent.length > 200) estH += 60;
-
                 blocks.push({
                     type: 'question',
                     qType: qType,
-                    html: itemHtml,
-                    estHeight: estH
+                    html: itemHtml
                 });
 
                 globalQIndex++;
             });
         });
 
-        // Group blocks into A4 Page cards
-        const pages = [];
-        let currentPage = [];
-        let currentH = 0;
-        const PAGE_1_MAX = 620; // Height budget for Page 1
-        const PAGE_N_MAX = 920; // Height budget for Page 2+
+        const initialContent = blocks.map((block, index) => `
+            <div class="paper-page-block flow-root" data-paper-block-index="${index}" data-paper-block-type="${block.type}" data-paper-block-qtype="${escapeHtml(block.qType || '')}">
+                ${block.html}
+            </div>
+        `).join('');
 
-        blocks.forEach(blk => {
-            const maxH = (pages.length === 0) ? PAGE_1_MAX : PAGE_N_MAX;
-            if (currentH + blk.estHeight > maxH && currentPage.length > 0) {
-                pages.push(currentPage);
-                currentPage = [blk];
-                currentH = blk.estHeight;
-            } else {
-                currentPage.push(blk);
-                currentH += blk.estHeight;
-            }
-        });
-        if (currentPage.length > 0) {
-            pages.push(currentPage);
-        }
-
-        const totalPages = pages.length;
-
-        // Generate A4 Page Sheet DOM Cards
-        let pagesHtml = '';
-        pages.forEach((pgBlocks, pgIdx) => {
-            const isFirstPage = (pgIdx === 0);
-            let pgContent = pgBlocks.map(b => b.html).join('');
-
-            pagesHtml += `
-                <div class="a4-paper-sheet w-full max-w-[794px] min-h-[1123px] bg-white text-slate-900 px-10 py-12 shadow-2xl rounded-sm border border-slate-300 font-serif leading-relaxed relative overflow-hidden select-none mb-8">
-                    ${isFirstPage ? renderA4Header(meta, totalCount, totalScore, totalPages) : ''}
-                    
-                    <div class="space-y-1.5 text-[13px]">
-                        ${pgContent}
-                    </div>
-
-                    <!-- Page Footer -->
-                    <div class="absolute bottom-5 left-0 right-0 text-center text-xs font-serif text-slate-700 tracking-wider">
-                        数学 &nbsp; 第 ${pgIdx + 1} 页 (共 ${totalPages} 页)
-                    </div>
+        // Render all blocks once at the exact A4 width. After KaTeX and choice
+        // layout finish, rebalanceA4PaperPages measures these DOM nodes and
+        // replaces this provisional page with the real page set.
+        return `
+            <div class="a4-paper-sheet w-full max-w-[794px] h-[1123px] bg-white text-slate-900 px-10 py-12 shadow-2xl rounded-sm border border-slate-300 font-serif leading-relaxed relative overflow-hidden select-none mb-8" data-paper-page-index="0">
+                <div class="paper-page-header">${renderA4Header(meta, totalCount, totalScore, 1)}</div>
+                <div class="paper-page-content space-y-1.5 text-[13px]">
+                    ${initialContent}
                 </div>
-            `;
-        });
-
-        return pagesHtml;
+                <div class="paper-page-footer absolute bottom-5 left-0 right-0 text-center text-xs font-serif text-slate-700 tracking-wider">
+                    数学 &nbsp; 第 1 页 (共 1 页)
+                </div>
+            </div>
+        `;
     }
 
     window.movePaperSection = function (qType, direction) {

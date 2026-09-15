@@ -330,10 +330,34 @@ html.init-ws-paper #toggleSidebarBtn { display: none !important; }
 /* Dedicated Protection for A4 Simulated Test Paper Preview */
 .a4-paper-sheet,
 .dark .a4-paper-sheet {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 794px;
+    height: 1123px;
+    min-height: 1123px;
     background-color: #ffffff !important;
     color: #0f172a !important;
     border-color: #cbd5e1 !important;
     box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.4) !important;
+}
+
+.a4-paper-sheet.a4-paper-sheet--expanded,
+.dark .a4-paper-sheet.a4-paper-sheet--expanded {
+    height: auto !important;
+    flex-shrink: 0 !important;
+    overflow: visible !important;
+}
+
+.paper-oversize-notice {
+    margin: 0 0 10px;
+    padding: 6px 10px;
+    border: 1px dashed #f59e0b;
+    border-radius: 8px;
+    background: #fffbeb;
+    color: #92400e !important;
+    font-family: Inter, "Microsoft YaHei", sans-serif;
+    font-size: 11px;
+    line-height: 1.45;
 }
 
 .a4-paper-sheet h1,

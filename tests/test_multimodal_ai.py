@@ -31,6 +31,9 @@ def test_ocr_prompt_compactly_preserves_tables_and_multi_figure_anchors():
     assert "表格内占位留在所属单元格" in prompt
     assert "仅当全图恰有一幅且位于表格外的独立几何/函数图时" in prompt
     assert "多图或无图时绝不输出该标记" in prompt
+    assert "已有定界符不得重复包裹" in prompt
+    assert "[[MBM_...]]" in prompt
+    assert "明确的粗体正体保留 `\\mathbf`" in prompt
     assert len(prompt) <= 720
 
 
@@ -384,11 +387,46 @@ def test_question_ocr_still_auto_draws_tikz_and_returns_original_reference(clien
         assert payload["tikz_image_path"] == rendered_url
         assert payload["image_path"].startswith("/static/test_uploads/ocr_original_")
         assert "ILLUSTRATION_BOX" not in payload["latex"]
+        assert "$$" not in payload["latex"]
+        assert payload["latex"].startswith("已知三角形 ABC\n\n![](")
         assert rendered_url in payload["latex"]
         assert observed_original is not None
     finally:
         if observed_original is not None:
             observed_original.unlink(missing_ok=True)
+
+
+def test_question_ocr_removes_illustration_marker_before_math_normalization_when_draw_is_skipped(client):
+    provider = SimpleNamespace(
+        api_key="ocr-key",
+        provider_label="Test OCR",
+        model_name="test-vision",
+        credential_label="TEST_KEY",
+    )
+    persisted_original = None
+
+    try:
+        with patch("main.resolve_ocr_provider", return_value=provider), patch(
+            "main.ocr_via_provider",
+            return_value="已知三角形 ABC\n[ILLUSTRATION_BOX: 10, 20, 90, 80]",
+        ), patch("main.draw_tikz_via_high_model") as draw:
+            response = client.post(
+                "/api/ocr",
+                data={"engine": "siliconflow", "skip_tikz": "true"},
+                files={"file": ("question.png", _png_bytes(), "image/png")},
+                headers={"X-Local-Token": LOCAL_TOKEN},
+            )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["latex"] == "已知三角形 ABC"
+        assert "ILLUSTRATION_BOX" not in payload["latex"]
+        assert "$$" not in payload["latex"]
+        draw.assert_not_called()
+        persisted_original = Path("main.py").resolve().parent / payload["image_path"].lstrip("/")
+    finally:
+        if persisted_original is not None:
+            persisted_original.unlink(missing_ok=True)
 
 
 def test_pdf_ocr_uses_claude_provider_when_selected():

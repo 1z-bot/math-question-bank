@@ -1877,12 +1877,85 @@ let bankQuestionsRetryTimer = null;
             return text.replace(/\\paren\b/g, '<span class="exam-zh-paren-preview" role="img" aria-label="选择题作答括号">（&nbsp;&nbsp;）</span>');
         }
 
+        function normalizeNakedMathForPreview(text) {
+            if (!text) return "";
+            let source = String(text);
+
+            const placeholders = [];
+            function protect(pattern, transform) {
+                source = source.replace(pattern, function(match) {
+                    const marker = `\uE000${placeholders.length}\uE001`;
+                    placeholders.push({
+                        marker,
+                        original: typeof transform === 'function' ? transform(match) : match
+                    });
+                    return marker;
+                });
+            }
+
+            [
+                /```[\s\S]*?```/g,
+                /`[^`\n]*`/g,
+                /!\[[^\]\n]*\]\([^\n)]*\)/g,
+                /\[\[MBM_[A-Za-z0-9_:-]+\]\]/g,
+                /\[ILLUSTRATION_BOX:\s*[^\]\n]*\]/gi,
+                /\$\$[\s\S]*?\$\$/g,
+                /\\\[[\s\S]*?\\\]/g,
+                /\\\([\s\S]*?\\\)/g,
+                /\$[\s\S]*?\$/g,
+                /\\begin\{(tabular\*?|tabularx|longtable|tblr|longtblr|talltblr)\}[\s\S]*?\\end\{\1\}/g
+            ].forEach(function(pattern) { protect(pattern); });
+
+            protect(
+                /\\begin\{(cases|aligned|alignedat|gathered|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|smallmatrix|array|equation\*?|gather\*?|multline\*?|split)\}[\s\S]*?\\end\{\1\}/g,
+                function(environment) { return '$' + environment.trim() + '$'; }
+            );
+
+            [
+                /\\(?:begin|end)\{[^}\n]+\}/g,
+                /\\item\b/g,
+                /\\fillin\b/g,
+                /\\paren\b/g,
+                /\\textbf\{[^{}\n]*\}/g,
+                /\\includegraphics(?:\s*\[[^\]\n]*\])?\s*\{[^}\n]+\}/g,
+                /<\/?[A-Za-z][^>\n]*>/g
+            ].forEach(function(pattern) { protect(pattern); });
+
+            source = source.replace(/[A-Za-z0-9\\{}_^+\-*/=<>|(),.:\[\]\t ]+/g, function(raw) {
+                const core = raw.trim();
+                if (!core) return raw;
+                const nonMathCommands = new Set([
+                    'begin', 'bottomrule', 'centering', 'cline', 'end', 'fillin',
+                    'hline', 'includegraphics', 'item', 'midrule', 'multicolumn',
+                    'multirow', 'paren', 'renewcommand', 'textbf', 'toprule'
+                ]);
+                const commands = core.match(/\\[A-Za-z]+/g) || [];
+                const hasMathCommand = commands.some(command => !nonMathCommands.has(command.slice(1).toLowerCase()));
+                const hasScript = /[A-Za-z0-9})\]]\s*[_^](?:\s*\{|\s*[A-Za-z0-9\\])/.test(core);
+                const hasRelation = /[A-Za-z0-9})\]]\s*(?:=|<|>)\s*(?:[A-Za-z0-9({\[\\+\-])/.test(core);
+                const hasFunction = /\b[A-Za-z]\s*\([^)]*[A-Za-z0-9_+\-,\\][^)]*\)/.test(core);
+                const hasCoordinate = /\(\s*[+\-]?(?:\d+(?:\.\d+)?|[A-Za-z])\s*,[^)]*\)/.test(core);
+                if (!hasMathCommand && !hasScript && !hasRelation && !hasFunction && !hasCoordinate) return raw;
+                const leading = raw.slice(0, raw.length - raw.trimStart().length);
+                const trailing = raw.slice(raw.trimEnd().length);
+                return leading + '$' + core + '$' + trailing;
+            });
+
+            placeholders.slice().reverse().forEach(function(entry) {
+                source = source.replace(entry.marker, function() { return entry.original; });
+            });
+            return source;
+        }
+        window.normalizeNakedMathForPreview = normalizeNakedMathForPreview;
+
         function preprocessFormulaForKaTeX(text) {
             if (!text) return "";
             
             // Clean up any historical \vphantom{...} or \strut from underline text to prevent KaTeX rendering artifact letters
             let clean = text.replace(/\\vphantom\s*\{\s*[^}]*?\}/g, '')
                             .replace(/\\strut\b/g, '');
+
+            clean = normalizeNakedMathForPreview(clean);
 
             // Auto-heal punctuation inside math environment between \fillin and closing dollar (e.g. $ \fillin, $ -> $ \fillin $,) using safe replacer function
             clean = clean.replace(/(\$[^$]*?\\fillin)\s*([。，,；;！？!?\.]+)\s*\$/g, function(match, p1, p2) {
@@ -1980,7 +2053,7 @@ let bankQuestionsRetryTimer = null;
                     const label = labels[idx] || (idx + 1);
                     let cleanItem = item;
                     // Auto-wrap LaTeX math macros (e.g. \dfrac{5}{2}) in choices option if missing $
-                    if (/\\(dfrac|frac|sqrt|cdot|times|pm|le|ge|ne|in|vec|mathbf|mathrm|text|alpha|beta|gamma|delta|theta|pi|varphi|omega)\b/.test(cleanItem) && !/\$/.test(cleanItem)) {
+                    if (/\\(dfrac|frac|sqrt|cdot|times|pm|le|ge|ne|in|vec|mathbf|boldsymbol|mathrm|text|alpha|beta|gamma|delta|theta|pi|varphi|omega)\b/.test(cleanItem) && !/\$/.test(cleanItem)) {
                         cleanItem = '$' + cleanItem + '$';
                     }
                     html += `<div class="choices-item flex items-baseline"><span class="choices-label font-bold mr-1.5 text-slate-800 shrink-0">${label}.</span><span class="choices-content flex-1 [&>p]:m-0 [&>p]:inline">${cleanItem}</span></div>`;
@@ -2157,7 +2230,7 @@ let bankQuestionsRetryTimer = null;
                             }
                         }
 
-                        cell = unescapeTableCellForHtml(cell);
+                        cell = normalizeNakedMathForPreview(unescapeTableCellForHtml(cell));
                         const borderClass = "border border-slate-300 dark:border-slate-700";
                         const rowspanAttr = rowspan > 1 ? ' rowspan="' + rowspan + '"' : "";
                         html += '<td colspan="' + colspan + '"' + rowspanAttr + ' class="px-3 py-1.5 ' + borderClass + ' ' + alignClass + ' font-normal align-middle">' + cell + '</td>';

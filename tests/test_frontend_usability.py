@@ -68,7 +68,7 @@ def test_editor_preview_converts_exam_zh_paren_after_protecting_math_blocks():
 
     node = shutil.which("node")
     assert node, "Node.js is required for the frontend executable regression"
-    script = helper_source + r"""
+    script = "global.window = {};\n" + helper_source + r"""
 const rendered = transformExamZhParenForPreview(String.raw`题干 \paren`);
 if (rendered.includes(String.raw`\paren`)) {
   throw new Error(`paren macro leaked into preview: ${rendered}`);
@@ -102,6 +102,73 @@ if (similarlyNamed !== String.raw`\parent`) {
     assert ".exam-zh-paren-preview" in css_source
     assert "float: right;" in css_source
     assert re.search(r"\.choices-grid\s*\{[^}]*clear:\s*both;", css_source, re.DOTALL)
+
+
+def test_editor_preview_repairs_naked_math_without_touching_existing_blocks():
+    editor_source = _read(STATIC_JS_DIR / "editor.js")
+    helper_start = editor_source.index("function normalizeNakedMathForPreview(text)")
+    helper_marker = "window.normalizeNakedMathForPreview = normalizeNakedMathForPreview;"
+    helper_end = editor_source.index(helper_marker, helper_start) + len(helper_marker)
+    helper_source = editor_source[helper_start:helper_end]
+
+    assert "(?<!" not in helper_source
+    assert "(?<=" not in helper_source
+
+    node = shutil.which("node")
+    assert node, "Node.js is required for the frontend executable regression"
+    script = "global.window = {};\n" + helper_source + r'''
+const source = String.raw`已知平面向量 \mathbf{a}, \mathbf{b} 不共线，且 2\mathbf{a} + y\mathbf{b} = x\mathbf{a} - 3\mathbf{b}。
+当 x \geqslant 0 时，f(x_1) \leqslant f(x_2)，且 y^2 > 0；当 x < 0 时经过点 (4,8)。
+已有 $z_1^2$，以及跨行公式 $u^2 +
+v^2 = 1$。
+\begin{cases} x=1 \\ y=2 \end{cases}
+\begin{tabular}{cc} x_1 & y_1 \\ x_2 & y_2 \end{tabular}
+题干 \paren
+\begin{choices}
+\item \frac{1}{2}
+\item x = 2
+\end{choices}`;
+const rendered = normalizeNakedMathForPreview(source);
+for (const expected of [
+  String.raw`$\mathbf{a}, \mathbf{b}$`,
+  String.raw`$2\mathbf{a} + y\mathbf{b} = x\mathbf{a} - 3\mathbf{b}$`,
+  String.raw`$x \geqslant 0$`,
+  String.raw`$x < 0$`,
+  String.raw`$f(x_1) \leqslant f(x_2)$`,
+  String.raw`$y^2 > 0$`,
+  String.raw`$x < 0$`,
+  String.raw`$(4,8)$`,
+  String.raw`$z_1^2$`,
+  String.raw`$u^2 +
+v^2 = 1$`,
+  String.raw`$\begin{cases} x=1 \\ y=2 \end{cases}$`,
+  String.raw`\begin{tabular}{cc} x_1 & y_1 \\ x_2 & y_2 \end{tabular}`,
+  String.raw`题干 \paren`,
+  String.raw`\item $\frac{1}{2}$`,
+  String.raw`\item $x = 2$`,
+]) {
+  if (!rendered.includes(expected)) {
+    throw new Error(`missing normalized math ${expected}: ${rendered}`);
+  }
+}
+if (rendered.includes(String.raw`$$z_1^2$$`)) {
+  throw new Error(`existing math was double wrapped: ${rendered}`);
+}
+if (rendered.includes(String.raw`$\begin{cases} $`) || rendered.includes(String.raw`$\begin{tabular}`)) {
+  throw new Error(`structured environment was split or wrapped incorrectly: ${rendered}`);
+}
+if (rendered.includes(String.raw`$\paren$`) || rendered.includes(String.raw`\boldsymbol`)) {
+  throw new Error(`text macro or explicit vector typography was changed: ${rendered}`);
+}
+'''
+    result = subprocess.run(
+        [node, "-e", script],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_editor_preview_restores_adjacent_math_without_splitting_fillin_lines():
@@ -148,6 +215,27 @@ for (const source of [
   if (rendered.includes('@@MATH_PLACEHOLDER_')) {
     throw new Error(`math placeholder leaked: ${rendered}`);
   }
+}
+
+const structured = window.preprocessFormulaForKaTeX(String.raw`\begin{tabular}{cc} x_1 & y_1 \\ x_2 & y_2 \end{tabular}`);
+if ((structured.match(/<td\b/g) || []).length !== 4) {
+  throw new Error(`tabular structure did not render as 2x2 HTML: ${structured}`);
+}
+for (const cellMath of [String.raw`$x_1$`, String.raw`$y_1$`, String.raw`$x_2$`, String.raw`$y_2$`]) {
+  if (!structured.includes(cellMath)) {
+    throw new Error(`table cell math was not repaired safely: ${structured}`);
+  }
+}
+
+const casesSource = String.raw`\begin{cases} x=1 \\ y=2 \end{cases}`;
+const renderedCases = window.preprocessFormulaForKaTeX(casesSource);
+if (renderedCases !== '$' + casesSource + '$') {
+  throw new Error(`cases environment was not wrapped as one formula: ${renderedCases}`);
+}
+
+const multilineSource = `$x^2 +\ny^2 = 1$`;
+if (window.preprocessFormulaForKaTeX(multilineSource) !== multilineSource) {
+  throw new Error('multiline math was changed or double wrapped');
 }
 """
     result = subprocess.run(
@@ -292,6 +380,107 @@ if (!result.choicesRaw.startsWith(String.raw`\begin{choices}`) || !result.choice
     assert 'class="paper-choice-stem-row' in paper_source
     assert 'class="paper-choice-options-row"' in paper_source
     assert ".paper-choice-options-row" in css_source
+
+
+def test_a4_preview_paginates_by_measured_height_and_keeps_every_question():
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+    css_source = _read(CSS_PATH)
+    helper_start = paper_source.index("function paginatePaperBlocksByHeight(")
+    helper_marker = "window.paginatePaperBlocksByHeight = paginatePaperBlocksByHeight;"
+    helper_end = paper_source.index(helper_marker, helper_start) + len(helper_marker)
+    helper_source = paper_source[helper_start:helper_end]
+
+    assert "PAGE_1_MAX" not in paper_source
+    assert "PAGE_N_MAX" not in paper_source
+    assert "rawContent.length > 200" not in paper_source
+    assert "getBoundingClientRect" in paper_source
+    assert "paper-page-footer" in paper_source
+    assert "new ResizeObserver(repaginateAfterLayoutChange)" in paper_source
+    assert "resizeObserver.observe(sheet)" in paper_source
+    assert "resizeObserver.observe(block)" in paper_source
+    assert "window.scheduleActiveA4Repagination" in paper_source
+    assert "sheet.innerHTML = '';" not in paper_source
+    assert "generatedHeader.replaceWith(existingHeader)" in paper_source
+    assert "a4-paper-sheet--expanded" in paper_source
+    assert "预览已自动扩展以完整显示" in paper_source
+    assert re.search(
+        r"\.a4-paper-sheet\s*,[^{]*\{[^}]*height:\s*1123px;",
+        css_source,
+        re.DOTALL,
+    )
+    assert re.search(
+        r"\.a4-paper-sheet\.a4-paper-sheet--expanded[^}]*"
+        r"height:\s*auto\s*!important;[^}]*"
+        r"flex-shrink:\s*0\s*!important;[^}]*"
+        r"overflow:\s*visible\s*!important;",
+        css_source,
+        re.DOTALL,
+    )
+
+    node = shutil.which("node")
+    assert node, "Node.js is required for the frontend executable regression"
+    script = r"""
+global.window = {};
+""" + helper_source + r"""
+const blocks = [
+  { id: 'title', type: 'section_title', qType: 'single_choice', height: 40 },
+  { id: 'q1', type: 'question', qType: 'single_choice', height: 80 },
+  { id: 'q2', type: 'question', qType: 'single_choice', height: 100 },
+  { id: 'q3', type: 'question', qType: 'single_choice', height: 100 },
+  { id: 'q4', type: 'question', qType: 'single_choice', height: 80 },
+  { id: 'q5', type: 'question', qType: 'single_choice', height: 190 },
+  { id: 'q6', type: 'question', qType: 'single_choice', height: 120 },
+  { id: 'q7', type: 'question', qType: 'single_choice', height: 180 },
+];
+const pages = window.paginatePaperBlocksByHeight(blocks, 620, 920);
+const ids = pages.flat().map(block => block.id);
+if (JSON.stringify(ids) !== JSON.stringify(blocks.map(block => block.id))) {
+  throw new Error(`pagination lost or reordered blocks: ${JSON.stringify(ids)}`);
+}
+if (ids.filter(id => id === 'q6').length !== 1) {
+  throw new Error(`question 6 count is invalid: ${JSON.stringify(pages)}`);
+}
+if (pages.length !== 2 || pages[0].some(block => block.id === 'q6') || pages[1][0].id !== 'q6') {
+  throw new Error(`measured overflow did not move q6 intact: ${JSON.stringify(pages)}`);
+}
+
+const headingBlocks = [
+  { id: 'q1', type: 'question', qType: 'single_choice', height: 500 },
+  { id: 'title2', type: 'section_title', qType: 'fill_in_blank', height: 40 },
+  { id: 'q2', type: 'question', qType: 'fill_in_blank', height: 120 },
+];
+const headingPages = window.paginatePaperBlocksByHeight(headingBlocks, 620, 920);
+if (headingPages[0].some(block => block.id === 'title2') || headingPages[1][0].id !== 'title2') {
+  throw new Error(`section heading was orphaned: ${JSON.stringify(headingPages)}`);
+}
+
+const oversizeBlocks = [
+  { id: 'oversize-title', type: 'section_title', qType: 'detailed_answer', height: 40 },
+  { id: 'oversize-question', type: 'question', qType: 'detailed_answer', height: 1251 },
+];
+const oversizePages = window.paginatePaperBlocksByHeight(oversizeBlocks, 620, 920);
+if (oversizePages.length !== 1 || oversizePages[0].map(block => block.id).join(',') !== 'oversize-title,oversize-question') {
+  throw new Error(`oversize question lost content or orphaned its heading: ${JSON.stringify(oversizePages)}`);
+}
+
+const firstPageHeadingPair = [
+  { id: 'later-title', type: 'section_title', qType: 'detailed_answer', height: 40 },
+  { id: 'later-question', type: 'question', qType: 'detailed_answer', height: 700 },
+];
+const firstPageHeadingPages = window.paginatePaperBlocksByHeight(firstPageHeadingPair, 620, 920);
+if (firstPageHeadingPages.length !== 2 || firstPageHeadingPages[0].length !== 0 ||
+    firstPageHeadingPages[1].map(block => block.id).join(',') !== 'later-title,later-question') {
+  throw new Error(`heading pair that fits a later page was split: ${JSON.stringify(firstPageHeadingPages)}`);
+}
+"""
+    result = subprocess.run(
+        [node, "-e", script],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_paper_preview_preserves_images_at_authored_complex_content_positions():
@@ -1807,9 +1996,10 @@ if (window.PaperStore.streamPagination.selected.page !== 1 ||
 }
 '''
     result = subprocess.run(
-        [node, "-e", script],
+        [node, "-"],
         cwd=PROJECT_ROOT,
         text=True,
+        input=script,
         capture_output=True,
         check=False,
     )

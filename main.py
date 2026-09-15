@@ -75,6 +75,7 @@ from mathbank.task_manager import (
 )
 from mathbank.docx_helper import extract_docx_markdown
 from mathbank.content_locks import lock_visible_math, restore_visible_math
+from mathbank.math_markdown import normalize_question_math_markdown
 from mathbank.tex_helper import (
     MAX_TEX_BYTES,
     decode_and_prepare_tex,
@@ -1129,6 +1130,11 @@ def ocr_formula(
             else:
                 # 剔除可能存在的由于大模型幻觉或者部分输出造成的残缺标记
                 latex_content = re.sub(r"\[ILLUSTRATION_BOX:.*?\]", "", latex_content).strip()
+
+            # Remove OCR protocol markers before repairing naked math. Otherwise
+            # the underscore in ILLUSTRATION_BOX can be mistaken for a subscript
+            # and leave behind an empty ``$$`` pair after marker cleanup.
+            latex_content = normalize_question_math_markdown(latex_content)
 
         # 如果高级模型成功生成了 TikZ 代码，我们在后台自动进行编译预览，并格式化追加到 latex 文本中！
         if tikz_code_from_high_model:
@@ -4023,14 +4029,18 @@ def parse_paper_text_internal(
         ans = q.get("answer_markdown", "")
         if not ans:
             q["answer_markdown"] = ""
-            continue
-        if not generate_answers_bool:
+        elif not generate_answers_bool:
             if "[EXTRACTED_ORIGINAL]" in ans:
                 q["answer_markdown"] = ans.replace("[EXTRACTED_ORIGINAL]", "").strip()
             else:
                 q["answer_markdown"] = ""
         else:
             q["answer_markdown"] = ans.replace("[EXTRACTED_ORIGINAL]", "").strip()
+
+        for field in ("content", "answer_markdown"):
+            value = q.get(field, "")
+            if isinstance(value, str) and value:
+                q[field] = normalize_question_math_markdown(value)
         
     return parsed_questions
 

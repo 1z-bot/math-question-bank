@@ -115,6 +115,12 @@ def test_pdf_parse_system_prompt_includes_formula_and_cross_page_rules():
     assert "\\sqrt{...}" in prompt
     assert "\\frac{...}{...}" in prompt
     assert "\\fillin" in prompt
+    assert "`$x_1$`" in prompt
+    assert "\\boldsymbol{a}" in prompt
+    assert "\\mathbf{a}" in prompt
+    assert "不得重复包裹" in prompt
+    assert "公式锁定 ID `[[MBM_...]]`" in prompt
+    assert "禁止输出裸露的" in prompt
     assert "MATHBANK_PDF_PAGE:N" in prompt
     assert "必须按上下文合并为同一道完整题目" in prompt
 
