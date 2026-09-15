@@ -64,6 +64,23 @@ def test_solve_prompt_builder_preserves_required_structure():
     assert "若 $x=1$" in user_prompt
 
 
+def test_solve_prompt_allows_high_school_derivatives_but_bans_university_calculus():
+    system_prompt, _ = build_ai_solve_prompts("detailed_answer", "求导数")
+
+    assert "允许使用普通高中课程中的导数及其应用" in system_prompt
+    assert "洛必达法则" in system_prompt
+    assert "泰勒展开" in system_prompt
+    assert "积分等" in system_prompt
+    assert "微积分、洛必达法则、泰勒展开等大学高等数学方法" not in system_prompt
+
+
+def test_solve_prompt_emits_single_latex_backslash_in_headings():
+    system_prompt, _ = build_ai_solve_prompts("single_choice", "求 1+1")
+
+    assert r"\textbf{【参考答案】}" in system_prompt
+    assert r"\\textbf{【参考答案】}" not in system_prompt
+
+
 def test_editor_identity_and_meta_preview_have_single_sources():
     api_source = (STATIC_JS_DIR / "api.js").read_text(encoding="utf-8")
     editor_source = (STATIC_JS_DIR / "editor.js").read_text(encoding="utf-8")

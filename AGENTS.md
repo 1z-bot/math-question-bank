@@ -177,6 +177,7 @@
 - **模型配置**：
   - **思考参数按供应商与型号隔离**：所有 OCR（含 PDF 页面）、绘图、解答（含流式）、拆卷、分类、AI 选题与 LaTeX 诊断统一通过 `mathbank.ai_providers.apply_model_thinking_policy` 构造参数。`inject_reasoning_effort` 只添加明确选中的 `reasoning_effort`，禁止连带添加 `enable_thinking`。已识别 GPT 推理型号在官方与中转站均不发送 `enable_thinking` / `thinking` / `thinking_budget`，使用 `max_completion_tokens` 并省略采样参数；Astra 还省略 `logprobs` / `top_logprobs`。DeepSeek 官方 V4 使用 `thinking.type`，硅基流动已识别 DeepSeek V4/V3.2 使用 `enable_thinking`，关闭时不携带推理强度；硅基流动 Qwen3-VL-8B/32B-Instruct 不添加思考开关。百炼当前 Qwen 保留以下任务策略。其他自定义型号不猜测思考开关；中转站 Gemini 等别名（包括 `-high` / `-medium`）原样传递，不剥离后缀或静默改名。专项验证须覆盖官方 Astra、官方/中转站 Luna、两种 DeepSeek 接入方式、百炼与 Instruct 的请求参数隔离，模拟请求通过不能替代付费 API 实测。
   - OCR 首选阿里百炼 `qwen3.7-flash` 或硅基流动 `Qwen/Qwen3-VL-8B-Instruct`（中转站推荐 `gpt-5.6-luna`）。
+  - OCR 提示词要求只输出转录，不输出代码块、前言或解释；无法确认的公式/符号标记 `[公式待核对]` 且不得猜补。选择题必须输出完整 `choices` 环境、去除原 A/B/C/D 标号；独立 `equation`/`align`/`gather`/`multline` 与 `tabular` 结构原样保留，`cases`/`aligned`/`array` 整体置于同一数学环境；多图/表内图只保留原位占位，不描述或重绘。
   - 阿里百炼预设按任务隔离：OCR、拆卷与分类默认 `qwen3.7-flash`，解答与绘图默认 `qwen3.7-plus`，`qwen3.8-max` 仅作为高性能可选项；旧型号不再列为预设，但既有配置与自定义模型必须继续可见且不得被静默改写。
   - **阿里百炼思考策略隔离**：仅对 `provider_code == "bailian"` 的 Qwen3.7/3.8 生效。OCR、拆卷、分类、AI 选题和 LaTeX 诊断显式关闭思考；解答服从前端开关；TikZ 绘图显式开启思考。Qwen3.7 使用 `thinking_budget`，Qwen3.8 Max 使用 `reasoning_effort=medium`，两者禁止同时发送；当前型号使用 `max_completion_tokens`，百炼专属规则不得应用到其他供应商。
   - 解答 (`PREFER_SOLVE_MODEL`)、拆卷 (`PREFER_PARSE_MODEL`)、分类 (`PREFER_CLASSIFY_MODEL`) 与绘图 (`PREFER_DRAW_MODEL`) 可单独配置。

@@ -4,17 +4,17 @@ import json
 
 
 COMMON_OCR_PROMPT = (
-    "精确转录图中全部文字、公式、括号与来源，只输出结果。\n"
-    "【LaTeX】数学片段完整置于行内 `$...$` 或独立 `$$...$$`；中文留在外部，已有定界符不得重复包裹。锁定 ID `[[MBM_...]]`、结构命令及协议标记保持原样。\n"
-    "单字母、坐标、上下标、函数、方程、不等式、集合、区间、分式和几何符号均属数学，例如 `$x_1$`、`$y^2$`、`$f(x_1) \\leqslant f(x_2)$`、`$\\triangle PQR$`。\n"
-    "向量字形忠实原图：粗体斜体用 `\\boldsymbol`，明确的粗体正体保留 `\\mathbf`，箭头保留 `\\vec` 或 `\\overrightarrow`；不得凭题意改变字形。\n"
-    "选择题用 `\\begin{choices}` / `\\item`，填空用 `\\fillin`；小问和推导以空行分段。\n"
+    "转录文字、公式、括号、来源，只输出结果；不输出代码块、前言。看不清公式/符号标[公式待核对]，不得猜数字、正负号、条件或字形。\n"
+    "【LaTeX】数学片段在`$...$`或`$$...$$`中，中文在外；已有定界符不得重复包裹。锁定ID `[[MBM_...]]`、结构和协议原样保留；独立 equation/align/gather/multline、tabular 原样；cases/aligned/array 整体置于数学环境。\n"
+    "变量、坐标、上下标、函数、方程、不等式、集合、区间、分式、几何符号均为数学：`$f(x_1) \\leqslant f(x_2)$`、`$\\triangle PQR$`。\n"
+    "向量字形按图：粗体斜体用 `\\boldsymbol`，明确的粗体正体保留 `\\mathbf`，箭头保留 `\\vec` 或 `\\overrightarrow`；不凭题意改字形。\n"
+    "选择题用完整 `\\begin{choices}...\\end{choices}`，每项以 `\\item` 开头并去掉原 A/B/C/D 标号；填空用 `\\fillin`；小问和推导以空行分段。\n"
     "表格用 `tabular` 保留行列，合并格用 `multicolumn/multirow`；标题、小问和图号顺序不变。\n"
-    "多图/表内图在原位写 `[插图待补: 图1]`（无图号按阅读顺序编号），表格内占位留在所属单元格；勿猜测或重绘。过滤 \\, 与 \\!。"
+    "多图/表内图在原位写 `[插图待补: 图1]`（无图号按阅读顺序编号），表格内占位留在所属单元格；勿描述、猜测或重绘。过滤 \\, 与 \\!。"
 )
 
 ILLUSTRATION_BOX_PROMPT = (
-    "\n8. 自动绘图：仅当全图恰有一幅且位于表格外的独立几何/函数图时，在文末追加"
+    "\n仅当全图恰有一幅且位于表格外的独立几何/函数图时，在文末追加"
     " `[ILLUSTRATION_BOX: ymin, xmin, ymax, xmax]`（0-100 整数）；多图或无图时绝不输出该标记。"
 )
 
@@ -113,7 +113,7 @@ def build_ai_solve_prompts(
     system_instructions = (
         "你是一位极其严谨的资深高中数学教研专家。请解答用户输入的高中数学题目。\n"
         "【解题纪律与超纲禁令】\n"
-        "1. 严禁超纲：解题思路与技巧必须完全限制在中国普通高中数学大纲范围内（严禁使用微积分、洛必达法则、泰勒展开等大学高等数学方法）。\n"
+        "1. 严禁超纲：允许使用普通高中课程中的导数及其应用；禁止使用大学微积分方法（洛必达法则、泰勒展开、积分等）或未给定的高等结论。\n"
         "2. 逻辑严密与极简凝练：推导过程必须逻辑完备、因果严谨（写明公理定理前提，不盲目跳步），但语言精练直奔得分点，拒绝任何多余的口水话或过度解释。\n"
         f"3. 零多余前言尾注：回答必须干净地从结构化板块开始，第一个字符必须是“{first_block_header}”，严禁包含任何问候语、前言、导语或尾注总结。\n"
         "【LaTeX 与段落换行规范】\n"
@@ -131,6 +131,9 @@ def build_ai_solve_prompts(
         )
     if custom_prompt:
         user_prompt += f"补充引导指令: {custom_prompt}\n"
+    # Keep one LaTeX backslash in the model-visible prompt headings. The
+    # request serializer adds JSON escaping separately.
+    system_instructions = system_instructions.replace("\\\\textbf", "\\textbf")
     user_prompt += f"题干内容:\n{content}"
     return system_instructions, user_prompt
 
@@ -197,7 +200,7 @@ def build_pdf_parse_system_prompt(curriculum: dict, generate_answers_bool: bool)
         "4. 符号与公式规范：仅对含义明确的 Unicode 数学字符与结构（如 √、∈、α、β以及分子/分母边界清晰的分式）规范化为等价 LaTeX 语法（如 `\\sqrt{...}`, `\\frac{...}{...}`, `\\in`, `\\alpha`）。不得将普通字母 `j`、`p` 等根据语境猜成希腊字母或分式；不得根据题意自行重建原文中已损坏、缺失或标记待核对的公式。\n"
         "4.1 PDF 跨页协议：`<!-- MATHBANK_PDF_PAGE:N -->` 仅表示后续原文来自 PDF 第 N 页，用于来源追踪，不是题目边界，也不得出现在输出题干中。若一道题的题干、公式、表格、选项或解析跨越页标，必须按上下文合并为同一道完整题目，禁止按页拆成两题。\n"
         "5. 换行与段落规范：不同小问（如 (1)、(2)、(i)、(ii)）、证明推导步骤与自然段落之间，必须使用双换行/空行（`\\n\\n`）分隔！\n"
-        "6. 题干净化与客观题答案：若题干/括号/下划线中夹带了答案，必须擦除还原为纯净的空占位符；客观题（选择题/填空题）必须在 `answer_markdown` 第一行醒目输出最终正确答案（如选项字母 A 或数值/表达式），再呈现解析。\n"
+        "6. 题干净化与客观题答案：若题干/括号/下划线中夹带了答案，必须擦除还原为纯净的空占位符；仅在答案规则允许提取或生成时，客观题（选择题/填空题）才在 `answer_markdown` 第一行输出最终答案；若规则要求空字符串则保持空白，不得自行生成。\n"
         f"{answer_rule}\n\n"
         "【输出约束与 JSON 格式】:\n"
         "必须且只能输出严格合法的 JSON 对象，绝对不要包裹 ```json Markdown 代码块！字符串内部换行必须输出 JSON 转义序列 `\\n`（反斜杠+n），LaTeX 命令的反斜杠必须按 JSON 规范转义为双反斜杠 `\\\\`。\n"

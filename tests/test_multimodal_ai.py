@@ -34,6 +34,11 @@ def test_ocr_prompt_compactly_preserves_tables_and_multi_figure_anchors():
     assert "已有定界符不得重复包裹" in prompt
     assert "[[MBM_...]]" in prompt
     assert "明确的粗体正体保留 `\\mathbf`" in prompt
+    assert r"完整 `\begin{choices}...\end{choices}`" in prompt
+    assert "去掉原 A/B/C/D 标号" in prompt
+    assert "看不清公式/符号标[公式待核对]" in prompt
+    assert "勿描述、猜测或重绘" in prompt
+    assert "独立 equation/align/gather/multline、tabular 原样" in prompt
     assert len(prompt) <= 720
 
 

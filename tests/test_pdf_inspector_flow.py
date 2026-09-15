@@ -112,6 +112,7 @@ def test_cross_page_text_is_merged_without_question_terminator():
 
 def test_pdf_parse_system_prompt_includes_formula_and_cross_page_rules():
     prompt = build_pdf_parse_system_prompt({"必修一": {"集合": []}}, False)
+    generated_prompt = build_pdf_parse_system_prompt({"必修一": {"集合": []}}, True)
     assert "\\sqrt{...}" in prompt
     assert "\\frac{...}{...}" in prompt
     assert "\\fillin" in prompt
@@ -121,6 +122,10 @@ def test_pdf_parse_system_prompt_includes_formula_and_cross_page_rules():
     assert "不得重复包裹" in prompt
     assert "公式锁定 ID `[[MBM_...]]`" in prompt
     assert "禁止输出裸露的" in prompt
+    assert "仅在答案规则允许提取或生成时" in prompt
+    assert "若规则要求空字符串则保持空白" in prompt
+    assert "若原试卷无答案，必须将 `answer_markdown` 设为空字符串" in prompt
+    assert "若原试卷缺答案，请自动推导生成标准解答步骤" in generated_prompt
     assert "MATHBANK_PDF_PAGE:N" in prompt
     assert "必须按上下文合并为同一道完整题目" in prompt
 
