@@ -826,6 +826,7 @@
                     answer_tikz_assets: JSON.stringify(TikzState.answerAssets),
                     figure_align: figureLayout.figure_align,
                     figure_size: figureLayout.figure_size,
+                    image_layouts: figureLayout.image_layouts || {},
                     figure_align_custom: figureLayout.figure_align_custom,
                     tags: rawTags
                 });
@@ -852,6 +853,7 @@
                 formData.append('answer_tikz_assets', JSON.stringify(TikzState.answerAssets));
                 formData.append('figure_align', figureLayout.figure_align);
                 formData.append('figure_size', figureLayout.figure_size);
+                formData.append('image_layouts', JSON.stringify(figureLayout.image_layouts || {}));
                 formData.append(
                     'figure_align_custom',
                     figureLayout.figure_align_custom ? 'true' : 'false'

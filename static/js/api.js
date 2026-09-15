@@ -519,14 +519,48 @@
             }
         };
         window.TikzState = TikzState;
+        // Image references remain at their authored anchors; only the final cluster detaches.
+        window.ImageLayoutTools = {
+            key(path) { return String(path || '').trim().replace(/^\/?(?:static\/)?uploads\//, ''); },
+            split(raw) {
+                const source = String(raw || '');
+                const matches = [...source.matchAll(/!\[.*?\]\(([^)]+)\)/g)];
+                let end = source.length;
+                for (const match of matches.slice().reverse()) {
+                    if (source.slice(match.index + match[0].length, end).trim()) break;
+                    const stack = [];
+                    const envs = source.slice(0, match.index).matchAll(/\\(begin|end)\{(tabular\*?|tabularx|longtable|tblr|longtblr|talltblr|choices)\}/g);
+                    for (const env of envs) {
+                        if (env[1] === 'begin') stack.push(env[2]);
+                        else if (stack[stack.length - 1] === env[2]) stack.pop();
+                    }
+                    if (stack.length) break;
+                    end = match.index;
+                }
+                return { body: source.slice(0, end).trimEnd(), tail: source.slice(end).trim(), tailStart: end, matches };
+            },
+            normalize(layouts) {
+                const result = {};
+                if (!layouts || typeof layouts !== 'object' || Array.isArray(layouts)) return result;
+                Object.entries(layouts).slice(0, 200).forEach(([path, layout]) => {
+                    if (layout && ['left', 'center', 'right'].includes(layout.align)
+                            && ['auto', 'small', 'medium', 'large'].includes(layout.size)) {
+                        Object.defineProperty(result, this.key(path), { value: { align: layout.align, size: layout.size }, enumerable: true, writable: true, configurable: true });
+                    }
+                });
+                return result;
+            }
+        };
         const FigureLayoutState = {
             align: 'right',
             size: 'auto',
             customAlign: false,
+            imageLayouts: {},
             reset() {
                 this.align = 'right';
                 this.size = 'auto';
                 this.customAlign = false;
+                this.imageLayouts = {};
             },
             hydrate(record) {
                 const align = String(record && record.figure_align || 'right');
@@ -538,6 +572,7 @@
                     ? size
                     : 'auto';
                 this.customAlign = Boolean(record && record.figure_align_custom);
+                this.imageLayouts = window.ImageLayoutTools ? window.ImageLayoutTools.normalize(record && record.image_layouts) : {};
             },
             setAlign(value) {
                 if (['right', 'bottom_left', 'center', 'bottom_right'].includes(value)) {
@@ -556,7 +591,8 @@
                 return {
                     figure_align: this.align,
                     figure_size: this.size,
-                    figure_align_custom: this.customAlign
+                    figure_align_custom: this.customAlign,
+                    image_layouts: JSON.parse(JSON.stringify(this.imageLayouts || {}))
                 };
             }
         };

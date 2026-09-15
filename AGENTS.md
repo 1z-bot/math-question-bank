@@ -40,11 +40,11 @@
 - **题干录入**：支持多行纯文本与 LaTeX 代码混合输入，界面配备实时 KaTeX 渲染预览区。
 - **插图管理**：提供图片上传与 TikZ 绘图代码输入。图片保存在本地文件系统（`static/uploads/`），数据库存储相对路径。
 - **插图排版位置联动与多图复合渲染**：
-  - **多模式与多插图支持**：插图在后端存储 `figure_align` 属性（支持 `right` 题干右侧、`center` 下方居中、`bottom_left` 下方居左、`bottom_right` 下方居右）、`figure_size` 属性（支持 `auto` 自动、`small` 小、`medium` 中、`large` 大）与布尔属性 `figure_align_custom`（是否由用户明确选择位置）；旧题经 schema v9 备份优先迁移后尺寸默认为 `auto`、位置自定义默认为 `false`。
-  - **插图锚点与预览同步**：题末单图或连续图片簇继续由 `figure_align` 控制题干右侧、下方居左、下方居中或下方居右排版；图片后仍有正文、表格闭合结构、标题或说明时，前端组卷预览与 LaTeX/PDF 导出必须保留全部 Markdown 图片的原始正文锚点。`tabular`、`tabular*`、`tabularx`、`longtable`、`tblr`、`longtblr`、`talltblr` 单元格内图片不得抽取到题末，多图复杂题的网页与 PDF 顺序必须和题库详情一致。
-  - **交互弹窗切换**：在 A4 试卷预览框中点击或右击题末可分离插图可弹出气泡菜单切换排版位置与尺寸，并通过 `POST /api/questions/{qid}/figure_layout` 同时校验、持久化 `figure_align` / `figure_size`；新旧两个布局端点成功后都必须将 `figure_align_custom` 设为 `true`。旧 `POST /api/questions/{qid}/figure_align` 仅作兼容入口且不得改写已存尺寸。小练模式只能在 `figure_align_custom` 与历史临时字段 `custom_figure_align` 均不为真时，才将旧题的 `right` 解释为默认 `bottom_right`。题干右侧是固定安全窄栏；在该位置选择 `medium` / `large` 时必须自动切换到下方居右，选择题干右侧时已有中/大尺寸必须收敛为 `small`，避免尺寸按钮看似无效。正文或表格内锚定图片不显示整题插图控件，避免移动或缩放后破坏语义结构。
-  - **题库编辑器尺寸入口**：普通插图的文件徽标、文件名或题末实时预览图可点击打开与 A4 预览一致的轻量位置＋尺寸选择，默认尺寸为 `auto`，不新增常驻面板；预览图按住 Cmd/Ctrl 点击仍可查看原图，正文或表格内锚定图保持原有查看行为。未保存题目的选择只随正常保存写库。
-  - **尺寸安全与导出一致性**：网页、LaTeX/PDF 与 Word 对 `small` / `medium` / `large` 使用对应的有界等比例尺寸；题干右侧始终受窄栏上限保护，下方居左、居中或居右仍不得超过当前正文行宽/页面可用宽度。`auto` 保留普通图兼容尺寸，但网页可将单张宽幅题末图自适应放大；A4 分页与解答留白必须按自动宽图上限预留，防止页底裁切。
+  - **多模式与多插图支持**：插图在后端存储 `figure_align` 属性（支持 `right` 题干右侧、`center` 下方居中、`bottom_left` 下方居左、`bottom_right` 下方居右）、`figure_size` 属性（支持 `auto` 自动、`small` 小、`medium` 中、`large` 大）与布尔属性 `figure_align_custom`（是否由用户明确选择位置）；旧题经 schema v9 备份优先迁移后尺寸默认为 `auto`、位置自定义默认为 `false`。schema v10 通过同一备份优先迁移新增 `image_layouts` JSON 对象，默认 `{}`，以规范化图片路径为键存储正文图片的 `align`（`left` / `center` / `right`）与 `size`（`auto` / `small` / `medium` / `large`）；同一路径复用同一设置，不向 Markdown 注入排版标记。新建、更新、详情、摘要、草稿和完整备份均保留该字段，删除正文引用后移除对应设置；旧客户端未传字段时保留仍被引用的设置。
+  - **插图锚点与预览同步**：题末单图或连续图片簇继续由 `figure_align` 控制题干右侧、下方居左、下方居中或下方居右排版；必须逐段区分正文锚定图片和位于完整题干末尾的连续图片组，不得因前面已有正文图片而禁用题末图片组。图片后仍有正文、表格闭合结构、标题或说明时，该图片保留原始正文锚点；未闭合的表格或选项环境也不得抽取其图片。Python 共用 `mathbank.image_layout.split_image_anchors`，前端共用 `ImageLayoutTools.split`。`tabular`、`tabular*`、`tabularx`、`longtable`、`tblr`、`longtblr`、`talltblr` 单元格内图片不得抽取到题末，多图复杂题的网页与 PDF 顺序必须和题库详情一致。
+  - **交互弹窗切换**：在 A4 试卷预览框中点击或右击题末可分离插图可弹出气泡菜单切换排版位置与尺寸，并通过 `POST /api/questions/{qid}/figure_layout` 同时校验、持久化 `figure_align` / `figure_size`；新旧两个布局端点成功后都必须将 `figure_align_custom` 设为 `true`。旧 `POST /api/questions/{qid}/figure_align` 仅作兼容入口且不得改写已存尺寸。小练模式只能在 `figure_align_custom` 与历史临时字段 `custom_figure_align` 均不为真时，才将旧题的 `right` 解释为默认 `bottom_right`。题干右侧是固定安全窄栏；在该位置选择 `medium` / `large` 时必须自动切换到下方居右，选择题干右侧时已有中/大尺寸必须收敛为 `small`，避免尺寸按钮看似无效。正文或表格内锚定图片不得使用整题插图控件，编辑器改用该图独立的当前位置对齐与尺寸菜单；表格图片保持在原单元格内，并受单元格宽度和 4cm 高度限制。
+  - **题库编辑器尺寸入口**：普通插图的文件徽标、文件名及两个编辑预览中的图片均可点击打开轻量菜单：正文图片只调整当前位置对齐与该图尺寸，题末图片组继续使用整组位置与尺寸。默认尺寸为 `auto`，不新增常驻面板；预览图按住 Cmd/Ctrl 点击仍可查看原图。文字改变后同步刷新图片菜单资格和文件徽标；菜单打开后题干发生变化时拒绝旧菜单操作。`FigureLayoutState.imageLayouts` 为编辑器独立图片布局的唯一状态，纳入草稿、Dirty 比较及保存期间快照。未保存题目的选择只随正常保存写库。
+  - **尺寸安全与导出一致性**：网页、LaTeX/PDF 与 Word 对 `small` / `medium` / `large` 使用对应的有界等比例尺寸；题干右侧始终受窄栏上限保护，下方居左、居中或居右仍不得超过当前正文行宽/页面可用宽度。正文图片的独立对齐/尺寸必须同步至题库预览、组卷、PDF/LaTeX 和 Word，带 TikZ 源码时仍保留矢量绘图。`auto` 保留普通图兼容尺寸，但网页可将单张宽幅题末图自适应放大；A4 分页与解答留白必须按自动宽图上限预留，防止页底裁切。
   - **解答题留白调控**：解答题支持留白高度调控。若插图设为 `bottom_left`、`center` 或 `bottom_right`，插图包含在留白空间顶侧，避免垂直叠加过长。切换为 `exam_19`（高考卷）时自动恢复紧凑布局。
 - **选择题与填空题环境规范**：
   - 选择题选项统一格式化为 LaTeX `choices` 环境（`\begin{choices}` 和 `\item`），剥离原本的 A., B., C., D. 标号前缀。
@@ -156,7 +156,7 @@
 
 ### 3.12 可编辑 Word 试卷导出
 - **解耦与原生 OMML**：`mathbank.word_export_helper` 使用 python-docx 生成试卷结构，公式批量由 Pandoc 转为 Word 原生 OMML (`m:oMath`)，导出默认返回包含试卷正文与含答案解析两份文档的 `.zip` 打包。
-- **复杂表格与图片锚点**：Word 导出必须先在完整题干中提取 `tabular`，再拆分普通段落，禁止因单元格图片周围空行而泄漏原始 LaTeX。正文与表格内 Markdown 图片按原锚点写入；只有题末可分离图片簇使用 `figure_align`。三列比较表总宽固定为 9000 DXA，短标签首列窄于两列正文，`tblW`、`tblGrid` 与 `tcW` 必须一致，单元格图片同时受最大宽高约束。`\multicolumn` 与 `\multirow` 必须分别生成原生 Word 横向和纵向合并，不得以源码文字或重复空单元格代替。
+- **复杂表格与图片锚点**：Word 导出必须先在完整题干中提取 `tabular`，再拆分普通段落，禁止因单元格图片周围空行而泄漏原始 LaTeX。正文与表格内 Markdown 图片按原锚点写入；只有题末可分离图片簇使用 `figure_align`，前面含正文或表格图片时也必须独立生效。三列比较表总宽固定为 9000 DXA，短标签首列窄于两列正文，`tblW`、`tblGrid` 与 `tcW` 必须一致，单元格图片同时受最大宽高约束。`\multicolumn` 与 `\multirow` 必须分别生成原生 Word 横向和纵向合并，不得以源码文字或重复空单元格代替。
 - **Pandoc 按需运行组件**：Word 导出前先复用通过启动校验的用户指定、MathBank 管理或系统 Pandoc；缺失时须由用户一次确认后，由 `mathbank.runtime_components` 按 Windows x64 / macOS arm64 / macOS x86_64 下载固定版本。下载顺序为 Pandoc 官方 GitHub Release 后 SourceForge 备用镜像，两者必须通过同一份固定 SHA-256、大小、安全解压、`pandoc --version` 与真实 OMML DOCX smoke 后才能原子安装到 `.system_generated/runtime/pandoc/`；安装完成后必须自动续接原 Word 导出，不得要求用户选路径、配 PATH 或重启服务。
 - **Pandoc 安装收尾与诊断**：通过校验的 ZIP 保留在组件 `downloads/` 中，重试复用前必须重新核对大小和 SHA-256；校验、解压、启动验证、Word 公式验证、安装与正式位置启动复核须分别显示阶段。只有正式目录启动复核成功、安装函数返回后才能发布任务成功；发布或复核失败须恢复旧组件，恢复失败须保留备份并明示错误。日志、验证文档及暂存目录清理失败不得覆盖安装结果或阻断终态更新。安装错误须保留失败阶段、进程返回码/异常、标准错误及日志调用链；重新进入进行中的安装任务，失败后也须恢复重试、兼容导出和取消入口。macOS/Windows CI 使用 `MATHBANK_TEST_PANDOC_NATIVE=1 python -m pytest --noconftest tests/test_runtime_components.py`，实际验证固定官方包、含中文空格路径、OMML 与缓存复装；隔离测试不得写入用户组件目录。
 - **降级机制**：Pandoc 缺失或转换失败时调用 XeLaTeX 栅格化为 PNG 兜底，失败显示红色 `[公式待核对：...]`。
@@ -199,4 +199,4 @@
 ## 7. 开发与运行指令
 - **Python 版本**：最低 Python 3.10。
 - **本地启动**：`uvicorn main:app --reload`
-- **验证**：运行针对改动的 `python3 -m pytest tests/`、`python3 -m pip check`；JS 改动逐文件执行 `node --check`，macOS 启动器执行 `bash -n 启动题库系统.command`。Release 守卫继续检查 BAT ASCII/无 BOM/CRLF、Windows 平台接口缺失和 CP936 输出。启动器测试使用 `--noconftest`，覆盖旧状态/历史清单损坏仍可启动、现有服务直接打开、依赖补齐、端口冲突、实际错误日志和 Windows venv PID 转发。Windows CI 从最终 ZIP 解压至中文空格路径，放入损坏旧状态与指向无害进程的旧 PID，验证首次启动、重复打开保持同一服务且无关进程仍存活。macOS 用隔离目录和端口实测入口，不能以此替代真实 Windows 10/11 用户机验证。
+- **验证**：运行针对改动的 `python3 -m pytest tests/`（混合插图重点执行 `tests/test_image_layout.py`；原生 PDF 用 `MATHBANK_TEST_TIKZ_NATIVE=1 python3 -m pytest --noconftest tests/test_image_layout.py -k "not api"`）、`python3 -m pip check`；JS 改动逐文件执行 `node --check`，macOS 启动器执行 `bash -n 启动题库系统.command`。Release 守卫继续检查 BAT ASCII/无 BOM/CRLF、Windows 平台接口缺失和 CP936 输出。启动器测试使用 `--noconftest`，覆盖旧状态/历史清单损坏仍可启动、现有服务直接打开、依赖补齐、端口冲突、实际错误日志和 Windows venv PID 转发。Windows CI 从最终 ZIP 解压至中文空格路径，放入损坏旧状态与指向无害进程的旧 PID，验证首次启动、重复打开保持同一服务且无关进程仍存活。macOS 用隔离目录和端口实测入口，不能以此替代真实 Windows 10/11 用户机验证。

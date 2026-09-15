@@ -2724,6 +2724,7 @@ def create_question(
     figure_align: str = Form("right"),
     figure_align_custom: bool = Form(False),
     figure_size: str = Form("auto"),
+    image_layouts: str = Form("{}"),
     tags: str = Form(""),
     related_question_id: str = Form(""),
     image_paths: str = Form("[]"),  # JSON array string
@@ -2790,6 +2791,7 @@ def create_question(
             figure_size=figure_size,
             tags=tags
         )
+        db_question.image_layouts = image_layouts
         db_question.image_paths = parsed_img_paths
         db_question.content_tikz_assets = parsed_content_tikz_assets
         db_question.answer_tikz_assets = parsed_answer_tikz_assets
@@ -2914,6 +2916,7 @@ def update_question(
     figure_align: str = Form("right"),
     figure_align_custom: Optional[bool] = Form(None),
     figure_size: Optional[str] = Form(None),
+    image_layouts: Optional[str] = Form(None),
     tags: str = Form(""),
     related_question_id: str = Form(""),
     image_paths: str = Form("[]"),
@@ -2990,6 +2993,7 @@ def update_question(
         # Physical cleanup happens only after the database commit succeeds.
         removed_images = set(old_images) - set(parsed_img_paths)
 
+        db_question.image_layouts = image_layouts if image_layouts is not None else db_question.image_layouts
         db_question.image_paths = parsed_img_paths
         db_question.content_tikz_assets = parsed_content_tikz_assets
         db_question.answer_tikz_assets = parsed_answer_tikz_assets

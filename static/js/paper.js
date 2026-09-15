@@ -1473,7 +1473,7 @@
 
                     <!-- Full Question Render Content -->
                     <div class="question-full-render-box text-sm leading-relaxed text-slate-800 dark:text-slate-100 overflow-x-auto select-text" id="paper-q-render-${q.id}">
-                        ${formatQuestionContentHtml(q.content, q.id, getQuestionFigAlign(q), false, false, getQuestionFigSize(q))}
+                        ${formatQuestionContentHtml(q.content, q.id, getQuestionFigAlign(q), false, false, getQuestionFigSize(q), q.image_layouts || {})}
                     </div>
 
                     ${answerExpanded ? `
@@ -2149,9 +2149,9 @@
                 const choiceContentParts = isChoiceQuestion
                     ? splitChoiceContentForPaperPreview(rawContent)
                     : { stemRaw: rawContent, choicesRaw: '' };
-                let contentRes = q ? formatQuestionContentHtml(choiceContentParts.stemRaw, q.id, figAlign, isSolSpaceEmbedded, true, figSize) : '';
+                let contentRes = q ? formatQuestionContentHtml(choiceContentParts.stemRaw, q.id, figAlign, isSolSpaceEmbedded, true, figSize, q.image_layouts || {}) : '';
                 const separatedChoicesHtml = q && choiceContentParts.choicesRaw
-                    ? formatQuestionContentHtml(choiceContentParts.choicesRaw, q.id, figAlign, false, false, figSize)
+                    ? formatQuestionContentHtml(choiceContentParts.choicesRaw, q.id, figAlign, false, false, figSize, q.image_layouts || {})
                     : '';
                 let contentHtml = '';
                 let embeddedImgHtml = '';
@@ -3715,9 +3715,6 @@
         }
         const textarea = document.getElementById('editContent');
         if (textarea) textarea.dispatchEvent(new Event('input'));
-        if (typeof window.applyEditorFigureLayoutPreview === 'function') {
-            window.applyEditorFigureLayoutPreview();
-        }
     }
 
     function syncCurrentEditorFigureLayout(qid, layout, commitBaseline = false, expectedCurrent = null) {
@@ -4050,7 +4047,8 @@
     }
 
     function getDetachedFigureMetrics(raw, figAlign, figSize) {
-        const source = String(raw || '');
+        const fullSource = String(raw || '');
+        const source = window.ImageLayoutTools ? window.ImageLayoutTools.split(fullSource).tail : fullSource;
         if (shouldPreserveInlinePaperImages(source)) {
             return {
                 count: 0,
@@ -4135,7 +4133,7 @@
         });
     }
 
-    function formatQuestionContentHtml(raw, qid = null, figAlign = 'right', embedInSolSpace = false, showControls = true, figSize = 'auto') {
+    function formatQuestionContentHtml(raw, qid = null, figAlign = 'right', embedInSolSpace = false, showControls = true, figSize = 'auto', imageLayouts = {}) {
         if (!raw) return embedInSolSpace ? { stemHtml: '', imgHtml: null } : '';
         let html = String(raw).trim();
         figAlign = figAlign || 'right';
@@ -4151,9 +4149,13 @@
             }
         }
 
+        const imageParts = window.ImageLayoutTools ? window.ImageLayoutTools.split(html) : null;
+        const anchoredHtml = imageParts && imageParts.tail && imageParts.body
+            ? window.parseMarkdownWithMath(imageParts.body, imageLayouts) : '';
+        if (imageParts && imageParts.tail) html = imageParts.tail;
         if (shouldPreserveInlinePaperImages(html)) {
             const inlineHtml = typeof window.parseMarkdownWithMath === 'function'
-                ? window.parseMarkdownWithMath(html)
+                ? window.parseMarkdownWithMath(html, imageLayouts)
                 : window.MathBankSafe.sanitizeRichHtml(html);
             if (embedInSolSpace) {
                 return {
@@ -4181,7 +4183,7 @@
             html = window.MathBankSafe.sanitizeRichHtml(html);
         }
 
-        const stemText = html;
+        const stemText = anchoredHtml + html;
 
         if (imgSrcList.length > 0) {
             // 如果存在多张插图且原设定为右侧，默认自动优化调整为下方居中 (center) 展示

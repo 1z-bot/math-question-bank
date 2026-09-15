@@ -59,7 +59,7 @@ def test_editor_preview_converts_exam_zh_paren_after_protecting_math_blocks():
     css_source = _read(CSS_PATH)
 
     helper_start = editor_source.index("function transformExamZhParenForPreview(text)")
-    helper_end = editor_source.index("function preprocessFormulaForKaTeX(text)", helper_start)
+    helper_end = editor_source.index("function preprocessFormulaForKaTeX(text,", helper_start)
     helper_source = editor_source[helper_start:helper_end]
 
     assert r"/\\paren\b/g" in helper_source
@@ -753,24 +753,24 @@ def test_paper_and_editor_figure_layout_controls_keep_their_write_boundaries():
     assert "fetch(" not in editor_handler
 
     assert "let layoutChipRendered = false" in ocr_source
-    assert "const showLayoutChip = allowLayoutControls && !layoutChipRendered" in ocr_source
+    assert "const showLayoutChip = anchored || (allowLayoutControls && !layoutChipRendered)" in ocr_source
     assert ocr_source.count("showLayoutChip ?") == 1
     assert "window.showEditorFigureLayoutPopover(event)" in ocr_source
     assert "function hasDetachedEditorFigureGroup(sourceText)" in ocr_source
     assert "const allowLayoutControls = hasDetachedEditorFigureGroup" in ocr_source
-    assert "正文锚定插图保持原位置" in ocr_source
-    assert "? `<button type=\"button\" onclick=\"window.showEditorFigureLayoutPopover(event)\"" in ocr_source
-    assert ": `<span class=\"flex min-w-0 items-center gap-1.5\"" in ocr_source
+    assert "调整此图的对齐与尺寸，保持正文位置" in ocr_source
+    assert 'data-editor-image-key="${window.MathBankSafe.escapeAttribute(anchored ? imageKey' in ocr_source
+    assert "anchoredKeys.has(imageKey)" in ocr_source
 
     editor_popover_start = ocr_source.index("window.showEditorFigureLayoutPopover")
     editor_popover_end = ocr_source.index(
         "function renderIllustrationBadges()", editor_popover_start
     )
     editor_popover = ocr_source[editor_popover_start:editor_popover_end]
-    assert "['right', 'bottom_left', 'center', 'bottom_right'].map(align =>" in editor_popover
+    assert "Object.keys(alignLabels).map(align =>" in editor_popover
     assert 'class="grid grid-cols-2 gap-1"' in editor_popover
-    assert "${EDITOR_FIGURE_ALIGN_LABELS[align]}</button>" in editor_popover
-    assert "${layout.align === 'right' ? '中/大图自动改为下方居右' : '下方布局生效'}" in editor_popover
+    assert "${alignLabels[align]}</button>" in editor_popover
+    assert "imageKey ? '保持正文顺序'" in editor_popover
     assert ".replace('题干', '').replace('下方', '')" not in editor_popover
     for label in ('题干右侧', '下方居左', '下方居中', '下方居右'):
         assert label in ocr_source
@@ -797,6 +797,8 @@ def test_editor_detached_preview_click_edits_layout_and_preserves_original_view(
 
     node = shutil.which("node")
     assert node, "Node.js is required for the frontend executable regression"
+    api_source = _read(STATIC_JS_DIR / 'api.js')
+    shared = api_source[api_source.index('window.ImageLayoutTools = {'):api_source.index('const FigureLayoutState = {')]
     script = r'''
 const EDITOR_FIGURE_SIZE_LABELS = { auto: '自动', small: '小', medium: '中', large: '大' };
 const EDITOR_FIGURE_ALIGN_LABELS = { right: '题干右侧', bottom_left: '下方居左', center: '下方居中', bottom_right: '下方居右' };
@@ -852,7 +854,7 @@ function runGenericImageOpener(event) {
   const image = event.target.closest('img[data-safe-image-open]');
   if (image) window.open(image.getAttribute('src'), '_blank');
 }
-''' + helper_source + '\n' + click_source + r'''
+''' + shared + '\n' + helper_source + '\n' + click_source + r'''
 
 const detached = makeImage('/static/uploads/detached.png');
 applyEditorFigureLayoutPreview(
@@ -881,14 +883,14 @@ applyEditorFigureLayoutPreview(
   makeContainer(anchored),
   '![](/static/uploads/anchored.png)\n\n后续正文'
 );
-if (anchored.dataset.editorFigureLayout) {
-  throw new Error('anchored image incorrectly received whole-question layout controls');
+if (anchored.dataset.editorImageKey !== 'anchored.png') {
+  throw new Error('anchored image did not receive its own layout control');
 }
 const anchoredClick = clickEvent(anchored);
 handleEditorFigureLayoutPreviewClick(anchoredClick);
 runGenericImageOpener(anchoredClick);
-if (popoverCount !== 1 || openCount !== 2) {
-  throw new Error('anchored image no longer opens its original');
+if (popoverCount !== 2 || openCount !== 1) {
+  throw new Error('anchored image did not open its own menu');
 }
 '''
     result = subprocess.run(

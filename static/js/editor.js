@@ -172,6 +172,7 @@ let bankQuestionsRetryTimer = null;
                 answer_tikz_assets: JSON.stringify(TikzState.answerAssets),
                 figure_align: FigureLayoutState.align,
                 figure_size: FigureLayoutState.size,
+                image_layouts: JSON.parse(JSON.stringify(FigureLayoutState.imageLayouts || {})),
                 figure_align_custom: FigureLayoutState.customAlign,
                 tags: document.getElementById('editTags') ? document.getElementById('editTags').value : ''
             };
@@ -195,6 +196,7 @@ let bankQuestionsRetryTimer = null;
                 answer_tikz_assets: snapshot.answer_tikz_assets || '[]',
                 figure_align: snapshot.figure_align || 'right',
                 figure_size: snapshot.figure_size || 'auto',
+                image_layouts: snapshot.image_layouts || {},
                 figure_align_custom: Boolean(snapshot.figure_align_custom),
                 tags: snapshot.tags
             };
@@ -314,6 +316,7 @@ let bankQuestionsRetryTimer = null;
                    currentContentTikzAssets === (snapshot.content_tikz_assets || '[]') &&
                    currentAnswerTikzAssets === (snapshot.answer_tikz_assets || '[]') &&
                    currentFigureAlign === (snapshot.figure_align || 'right') &&
+                   JSON.stringify(FigureLayoutState.imageLayouts || {}) === JSON.stringify(snapshot.image_layouts || {}) &&
                    currentFigureSize === (snapshot.figure_size || 'auto') &&
                    currentFigureAlignCustom === Boolean(snapshot.figure_align_custom) &&
                    currentTags === snapshot.tags;
@@ -554,6 +557,7 @@ let bankQuestionsRetryTimer = null;
                 answer_tikz_assets: TikzState.answerAssets,
                 figure_align: FigureLayoutState.align,
                 figure_size: FigureLayoutState.size,
+                image_layouts: JSON.parse(JSON.stringify(FigureLayoutState.imageLayouts || {})),
                 figure_align_custom: FigureLayoutState.customAlign,
                 isDraft: true,
                 updated_at: new Date().toISOString()
@@ -791,7 +795,7 @@ let bankQuestionsRetryTimer = null;
                 const isActive = EditorState.draftId === item.id;
                 itemCard.className = `p-3.5 mx-1.5 rounded-xl border glass-card hover:bg-white cursor-pointer transition-all duration-200 shadow-sm flex flex-col space-y-2 select-none group relative ${isActive ? 'border-emerald-500 bg-white ring-2 ring-emerald-100 shadow-md' : 'border-slate-200'}`;
                 
-                const cleanContent = parseMarkdownWithMath(item.content || '');
+                const cleanContent = parseMarkdownWithMath(item.content || '', item.image_layouts || {});
                 
                 let tagsHtml = '';
                 if (item.tags) {
@@ -1345,7 +1349,7 @@ let bankQuestionsRetryTimer = null;
                         itemCard.className = `question-card p-3.5 mx-1.5 flex flex-col space-y-2 select-none group relative ${EditorState.questionId === item.id ? 'active' : ''}`;
                         itemCard.dataset.id = item.id;
                         
-                        const cleanContent = parseMarkdownWithMath(item.content || '');
+                        const cleanContent = parseMarkdownWithMath(item.content || '', item.image_layouts || {});
                         
                         let tagsHtml = '';
                         if (item.tags) {
@@ -1682,11 +1686,8 @@ let bankQuestionsRetryTimer = null;
                 
                 // Automatically sync illustrations list with text content
                 if (uploadedImages.length > 0) {
-                    const initialLength = uploadedImages.length;
                     uploadedImages = uploadedImages.filter(path => text.includes(path));
-                    if (uploadedImages.length !== initialLength) {
-                        renderIllustrationBadges();
-                    }
+                    renderIllustrationBadges();
                 }
                 
                 if (!text.trim()) {
@@ -1695,7 +1696,7 @@ let bankQuestionsRetryTimer = null;
                     return;
                 }
                 
-                const preparedHtml = renderQuestionPreviewContent(previewContainer, text);
+                const preparedHtml = renderQuestionPreviewContent(previewContainer, text, { imageLayouts: FigureLayoutState.imageLayouts });
                 renderQuestionPreviewContent(paperContainer, text, { preparedHtml: preparedHtml });
                 if (typeof window.applyEditorFigureLayoutPreview === 'function') {
                     window.applyEditorFigureLayoutPreview(previewContainer, text);
@@ -1948,7 +1949,7 @@ let bankQuestionsRetryTimer = null;
         }
         window.normalizeNakedMathForPreview = normalizeNakedMathForPreview;
 
-        function preprocessFormulaForKaTeX(text) {
+        function preprocessFormulaForKaTeX(text, imageLayouts = {}) {
             if (!text) return "";
             
             // Clean up any historical \vphantom{...} or \strut from underline text to prevent KaTeX rendering artifact letters
@@ -2281,7 +2282,11 @@ let bankQuestionsRetryTimer = null;
                 const safeSrc = window.MathBankSafe.safeImageUrl(src);
                 if (!safeSrc) return '';
                 const safeAlt = window.MathBankSafe.escapeAttribute(alt || '题目配图');
-                return `<div class="my-2.5 text-center"><img src="${window.MathBankSafe.escapeAttribute(safeSrc)}" alt="${safeAlt}" class="max-w-[220px] max-h-[180px] object-contain rounded-lg border border-slate-200 shadow-sm inline-block cursor-zoom-in hover:shadow-sm hover:scale-[1.02] transition-all" data-safe-image-open="true" title="点击在新标签页查看高清原图"></div>`;
+                const key = window.ImageLayoutTools ? window.ImageLayoutTools.key(src) : src;
+                const layout = Object.prototype.hasOwnProperty.call(imageLayouts || {}, key) ? imageLayouts[key] : null;
+                const align = layout && ['left', 'center', 'right'].includes(layout.align) ? layout.align : 'center';
+                const size = layout && ['auto', 'small', 'medium', 'large'].includes(layout.size) ? layout.size : 'auto';
+                return `<div class="my-2.5 text-center mb-inline-image-align-${align}"><img src="${window.MathBankSafe.escapeAttribute(safeSrc)}" alt="${safeAlt}" class="mb-inline-image-size-${size} max-w-[220px] max-h-[180px] object-contain rounded-lg border border-slate-200 shadow-sm inline-block cursor-zoom-in hover:shadow-sm hover:scale-[1.02] transition-all" data-safe-image-open="true" title="点击在新标签页查看高清原图"></div>`;
             });
                                
             // Restore math blocks with HTML escaping
@@ -2302,9 +2307,9 @@ let bankQuestionsRetryTimer = null;
         }
         window.preprocessFormulaForKaTeX = preprocessFormulaForKaTeX;
             
-        function parseMarkdownWithMath(text) {
+        function parseMarkdownWithMath(text, imageLayouts = {}) {
             if (!text) return "";
-            return window.MathBankSafe.sanitizeRichHtml(preprocessFormulaForKaTeX(text));
+            return window.MathBankSafe.sanitizeRichHtml(preprocessFormulaForKaTeX(text, imageLayouts));
         }
         window.parseMarkdownWithMath = parseMarkdownWithMath;
 
@@ -2325,7 +2330,7 @@ let bankQuestionsRetryTimer = null;
                         .replace(/!\[[^\]\n]*\]\(\s*(?:<[^>\n]*>|[^\s)]+)(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)/gi, '')
                         .replace(/<img\b[^>]*>/gi, '');
                 }
-                preparedHtml = parseMarkdownWithMath(source);
+                preparedHtml = parseMarkdownWithMath(source, settings.imageLayouts || {});
             }
             container.innerHTML = preparedHtml;
             try {

@@ -48,6 +48,8 @@ EXAM_19_STARTS = {
     "fill_in_blank": 12,
     "detailed_answer": 15,
 }
+from .image_layout import split_image_anchors, image_key, normalize_image_layouts, SIZE_CM
+
 IMAGE_PATTERN = re.compile(r"!\[.*?\]\(([^)]+)\)")
 CHOICES_PATTERN = re.compile(
     r"\\begin\{choices\}([\s\S]*?)\\end\{choices\}", re.IGNORECASE
@@ -819,6 +821,7 @@ class WordExamBuilder:
         images: list[Path] | None = None,
         max_image_width: float = 4.8,
         max_image_height: float = 2.8,
+        image_layouts: dict | None = None,
     ) -> None:
         image_by_name = {path.name: path for path in (images or []) if path.exists()}
 
@@ -869,15 +872,27 @@ class WordExamBuilder:
                 self.diagnostics.failed_formulas += 1
 
         cursor = 0
+        original_alignment = paragraph.alignment
         for match in IMAGE_PATTERN.finditer(text or ""):
             add_text((text or "")[cursor:match.start()])
             image_path = image_by_name.get(Path(match.group(1)).name)
+            layout = (image_layouts or {}).get(image_key(match.group(1)))
+            width, height = max_image_width, max_image_height
+            if layout:
+                if paragraph.runs:
+                    next_paragraph = paragraph._parent.add_paragraph()
+                    paragraph._p.addnext(next_paragraph._p)
+                    paragraph = next_paragraph
+                paragraph.alignment = {'left': WD_ALIGN_PARAGRAPH.LEFT, 'center': WD_ALIGN_PARAGRAPH.CENTER, 'right': WD_ALIGN_PARAGRAPH.RIGHT}[layout['align']]
+                if layout['size'] in SIZE_CM:
+                    cm_width, cm_height = SIZE_CM[layout['size']]
+                    width, height = min(width, cm_width / 2.54), min(height, cm_height / 2.54)
             if image_path is not None:
                 self._add_image(
                     paragraph,
                     image_path,
-                    max_width=max_image_width,
-                    max_height=max_image_height,
+                    max_width=width,
+                    max_height=height,
                 )
             else:
                 self.diagnostics.missing_images += 1
@@ -885,6 +900,11 @@ class WordExamBuilder:
                     f"插图无法写入：{Path(match.group(1)).name}"
                 )
             cursor = match.end()
+            if layout and (text or "")[cursor:].strip():
+                next_paragraph = paragraph._parent.add_paragraph()
+                paragraph._p.addnext(next_paragraph._p)
+                paragraph = next_paragraph
+                paragraph.alignment = original_alignment
         add_text((text or "")[cursor:])
 
     def add_title_block(
@@ -1136,13 +1156,16 @@ class WordExamBuilder:
     def add_question(self, item: PreparedQuestion, number: int) -> None:
         align = item.question.get("figure_align") or "right"
         usable_images = [path for path in item.images if path.exists()]
-        preserve_inline_images = _should_preserve_inline_image_positions(item.stem)
+        image_layouts = normalize_image_layouts(item.question.get("image_layouts", {}), item.stem)
+        preserve_inline_images = bool(IMAGE_PATTERN.search(item.stem))
         anchored_names = {
             Path(match.group(1)).name
             for match in IMAGE_PATTERN.finditer(item.stem)
         } if preserve_inline_images else set()
         inline_images = [path for path in usable_images if path.name in anchored_names]
-        detached_images = [path for path in usable_images if path.name not in anchored_names]
+        _, tail = split_image_anchors(item.question.get('content', ''))
+        tail_names = {Path(m[1]).name for m in IMAGE_PATTERN.finditer(tail)}
+        detached_images = [path for path in usable_images if path.name not in anchored_names or path.name in tail_names]
         if len(detached_images) > 1 and align == "right":
             align = "center"
         detached_width = self._detached_figure_width(
@@ -1172,11 +1195,11 @@ class WordExamBuilder:
                 max_height=detached_height,
             )
             # single_paragraph=True 确保全文在同一个 Word 段落中，使文字平滑紧贴图片四周型环绕！
-            self._add_content_blocks(p, item.stem, single_paragraph=True)
+            self._add_content_blocks(p, item.stem, single_paragraph=not preserve_inline_images, images=inline_images, image_layouts=image_layouts)
         else:
             p = self.doc.add_paragraph()
             self._format_question_paragraph(p, number)
-            self._add_content_blocks(p, item.stem, images=inline_images)
+            self._add_content_blocks(p, item.stem, images=inline_images, image_layouts=image_layouts)
             if detached_images:
                 fig_p = self.doc.add_paragraph()
                 fig_p.alignment = {
@@ -1217,6 +1240,7 @@ class WordExamBuilder:
         parent=None,
         single_paragraph: bool = False,
         images: list[Path] | None = None,
+        image_layouts: dict | None = None,
     ) -> None:
         segments = _split_content_segments(content)
         paragraph = first_paragraph
@@ -1228,6 +1252,7 @@ class WordExamBuilder:
                     second_value,
                     parent=parent,
                     images=images,
+                    image_layouts=image_layouts,
                 )
                 has_output = True
                 continue
@@ -1242,7 +1267,7 @@ class WordExamBuilder:
                     paragraph.paragraph_format.space_after = Pt(2)
             if IMAGE_PATTERN.fullmatch(part.strip()):
                 paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            self.add_mixed(paragraph, part, images=images)
+            self.add_mixed(paragraph, part, images=images, image_layouts=image_layouts)
             has_output = True
 
     def _add_image(
@@ -1304,6 +1329,7 @@ class WordExamBuilder:
         body: str,
         parent=None,
         images: list[Path] | None = None,
+        image_layouts: dict | None = None,
     ) -> None:
         alignments = [char for char in column_spec if char in "lcr"] or ["c"]
         cleaned = re.sub(r"\\(?:toprule|midrule|bottomrule|hline)\b", "", body)
@@ -1413,6 +1439,7 @@ class WordExamBuilder:
                             value.text,
                             SMALL_FONT_SIZE,
                             images=images,
+                            image_layouts=image_layouts,
                             max_image_width=max(
                                 0.5,
                                 sum(column_widths[start_col:end_col + 1]) / 1440 - 0.2,
@@ -1440,6 +1467,7 @@ class WordExamBuilder:
                     value.text,
                     SMALL_FONT_SIZE,
                     images=images,
+                    image_layouts=image_layouts,
                     max_image_width=max(
                         0.5,
                         sum(column_widths[start_col:end_col + 1]) / 1440 - 0.2,
@@ -1536,7 +1564,7 @@ def _resolve_image_paths(question: dict, uploads_dir: str | Path | None) -> list
 
 def _prepare_question(item: dict, uploads_dir: str | Path | None) -> PreparedQuestion:
     question = dict(item.get("question", {}) or {})
-    content = question.get("content", "") or ""
+    content, _ = split_image_anchors(question.get("content", "") or "")
     choices: list[str] = []
     match = CHOICES_PATTERN.search(content)
     if match:
@@ -1551,8 +1579,6 @@ def _prepare_question(item: dict, uploads_dir: str | Path | None) -> PreparedQue
             else:
                 stem_lines.append(line)
         stem = "\n".join(stem_lines).strip()
-    if not _should_preserve_inline_image_positions(stem):
-        stem = IMAGE_PATTERN.sub("", stem)
     stem = re.sub(r"\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\}", "", stem).strip()
     answer = question.get("answer_markdown", "") or ""
     answer_clean = IMAGE_PATTERN.sub("", answer)

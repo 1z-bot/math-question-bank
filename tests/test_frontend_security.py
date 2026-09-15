@@ -40,7 +40,7 @@ def test_untrusted_html_uses_dompurify_and_local_image_allowlist():
     assert "decodedPath.startsWith('/static/uploads/')" in api_source
     assert "url.origin !== window.location.origin" in api_source
 
-    assert "sanitizeRichHtml(preprocessFormulaForKaTeX(text))" in editor_source
+    assert "sanitizeRichHtml(preprocessFormulaForKaTeX(text, imageLayouts))" in editor_source
     assert "MathBankSafe.safeImageUrl(src)" in editor_source
     assert "MathBankSafe.safeImageUrl(m[1])" in paper_source
     assert "window.parseMarkdownWithMath(html)" in paper_source
@@ -1092,7 +1092,7 @@ def test_shared_question_preview_pipeline_is_used_by_editor_and_duplicate_review
         helper_start,
     )
     helper_source = editor_source[helper_start:helper_end]
-    parse_position = helper_source.index("preparedHtml = parseMarkdownWithMath(source)")
+    parse_position = helper_source.index("preparedHtml = parseMarkdownWithMath(source, settings.imageLayouts || {})")
     katex_position = helper_source.index("renderMathInElement(container")
     choices_position = helper_source.index("adaptChoicesGridLayout(container)")
     assert parse_position < katex_position < choices_position
@@ -1103,15 +1103,15 @@ def test_shared_question_preview_pipeline_is_used_by_editor_and_duplicate_review
     assert ".replace(/<img\\b[^>]*>/gi, '')" in helper_source
     assert "window.renderQuestionPreviewContent = renderQuestionPreviewContent;" in editor_source
 
-    parse_start = editor_source.index("function parseMarkdownWithMath(text)")
+    parse_start = editor_source.index("function parseMarkdownWithMath(text,")
     parse_end = editor_source.index("window.parseMarkdownWithMath = parseMarkdownWithMath;", parse_start)
     parse_source = editor_source[parse_start:parse_end]
-    assert "sanitizeRichHtml(preprocessFormulaForKaTeX(text))" in parse_source
+    assert "sanitizeRichHtml(preprocessFormulaForKaTeX(text, imageLayouts))" in parse_source
 
     update_start = editor_source.index("const updateContentPreview = () =>")
     update_end = editor_source.index("const updateAnswerPreview = () =>", update_start)
     update_source = editor_source[update_start:update_end]
-    assert "const preparedHtml = renderQuestionPreviewContent(previewContainer, text)" in update_source
+    assert "const preparedHtml = renderQuestionPreviewContent(previewContainer, text, { imageLayouts: FigureLayoutState.imageLayouts })" in update_source
     assert "renderQuestionPreviewContent(paperContainer, text, { preparedHtml: preparedHtml })" in update_source
     assert "renderMathInElement(" not in update_source
 

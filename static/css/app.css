@@ -2043,3 +2043,15 @@ main {
         min-height: 44px;
     }
 }
+
+/* Trusted enum classes survive rich-text sanitization without allowing inline CSS. */
+div.mb-inline-image-align-left { text-align: left; max-width: 100%; }
+div.mb-inline-image-align-center { text-align: center; max-width: 100%; }
+div.mb-inline-image-align-right { text-align: right; max-width: 100%; }
+img.mb-inline-image-size-small { max-width: min(100%, 200px); max-height: 168px; }
+img.mb-inline-image-size-medium { max-width: min(100%, 320px); max-height: 240px; }
+img.mb-inline-image-size-large { max-width: min(100%, 420px); max-height: 300px; }
+td img.mb-inline-image-size-small, td img.mb-inline-image-size-medium,
+td img.mb-inline-image-size-large { max-height: 160px; }
+#editorFigureLayoutPopover button { min-height: 44px; }
+#editorFigureLayoutPopover button[aria-label="关闭插图排版"] { min-width: 44px; }
