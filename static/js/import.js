@@ -287,14 +287,30 @@
             backupEditorState(null, null);
         }
 
-        // Load all questions to populate the related question dropdown list
-        function refreshRelatedDropdown(selectedId = "") {
-            fetch('/api/questions')
-                .then(r => r.json())
+        let relatedListLoadSequence = 0;
+        let relatedDropdownLoadSequence = 0;
+
+        // Load all questions to populate the related question dropdown list.
+        // Preserve selections made while either association GET is pending.
+        function refreshRelatedDropdown(selectedId = "", options = {}) {
+            const session = options.session || EditorState.snapshot();
+            const sequence = ++relatedDropdownLoadSequence;
+            const initialValue = options.expectedValue !== undefined
+                ? options.expectedValue : document.getElementById('editRelatedQuestion').value;
+            return fetch('/api/questions')
+                .then(r => {
+                    if (!r.ok) throw new Error('无法加载关联题目选项');
+                    return r.json();
+                })
                 .then(questions => {
+                    if (!EditorState.isCurrent(session) || sequence !== relatedDropdownLoadSequence
+                            || (options.isCurrent && !options.isCurrent())) return false;
+                    if (!Array.isArray(questions)) throw new Error('关联题目选项格式错误');
                     const dropdown = document.getElementById('editRelatedQuestion');
                     const numInput = document.getElementById('editRelatedQuestionNum');
-                    if (!dropdown) return;
+                    if (!dropdown) return false;
+                    const selectionChanged = dropdown.value !== String(initialValue || '');
+                    const selection = selectionChanged ? dropdown.value : String(selectedId || '');
                     
                     dropdown.innerHTML = '<option value="">-- 选择要关联的题目 (可选) --</option>';
                     
@@ -318,7 +334,7 @@
                         option.setAttribute('data-seq-num', q.seq_num);
                         option.textContent = optionText;
                         
-                        if (String(q.id) === String(selectedId)) {
+                        if (String(q.id) === selection) {
                             option.selected = true;
                             foundSelectedSeq = q.seq_num;
                         }
@@ -328,9 +344,14 @@
                     if (numInput) {
                         numInput.value = foundSelectedSeq;
                     }
+                    if (options.commitBaseline) {
+                        commitEditorRelatedBaseline(session, selectedId);
+                    }
+                    return true;
                 })
                 .catch(err => {
                     console.error('Failed to load related questions list:', err);
+                    return false;
                 });
         }
 
@@ -353,11 +374,14 @@
                 return;
             }
 
+            const session = EditorState.snapshot();
+            const sequence = ++relatedListLoadSequence;
+            ++relatedDropdownLoadSequence;
             try {
                 const formData = new FormData();
                 formData.append('target_id', targetId);
 
-                const res = await fetch(`/api/questions/${EditorState.questionId}/associate`, {
+                const res = await fetch(`/api/questions/${session.questionId}/associate`, {
                     method: 'POST',
                     headers: {
                         'X-Local-Token': localStorage.getItem('local_token') || ''
@@ -366,14 +390,16 @@
                 });
 
                 const data = await res.json();
+                if (!EditorState.isCurrent(session) || sequence !== relatedListLoadSequence) return false;
                 if (res.ok && data.status === 'success') {
-                    const selectedOpt = targetSelect.options[targetSelect.selectedIndex];
+                    commitEditorRelatedBaseline(session, targetId);
+                    const selectedOpt = Array.from(targetSelect.options).find(option => option.value === targetId);
                     const seqNum = selectedOpt ? selectedOpt.getAttribute('data-seq-num') : '';
                     showToast(`成功与题目 #${seqNum || targetId} 建立关联绑定！`, 'success');
 
                     // 刷新右侧预览区的关联变式题目卡片及下拉框
                     if (typeof loadAssociatedQuestionsInList === 'function') {
-                        loadAssociatedQuestionsInList(EditorState.questionId);
+                        await loadAssociatedQuestionsInList(session.questionId, targetId);
                     }
                 } else {
                     showToast(data.detail || data.message || '关联建立失败', 'error');
@@ -396,15 +422,26 @@
                 return;
             }
 
-            fetch(`/api/questions/${EditorState.questionId}/associated`, { method: 'DELETE' })
-                .then(r => r.json())
+            const session = EditorState.snapshot();
+            const expectedValue = document.getElementById('editRelatedQuestion').value;
+            const sequence = ++relatedListLoadSequence;
+            ++relatedDropdownLoadSequence;
+            return fetch(`/api/questions/${session.questionId}/associated`, { method: 'DELETE' })
+                .then(r => {
+                    if (!r.ok) throw new Error('解除关联请求失败');
+                    return r.json();
+                })
                 .then(data => {
+                    if (!EditorState.isCurrent(session) || sequence !== relatedListLoadSequence) return false;
                     if (data.status === 'success') {
+                        commitEditorRelatedBaseline(session, '');
                         // Clear UI
                         const dropdown = document.getElementById('editRelatedQuestion');
                         const numInput = document.getElementById('editRelatedQuestionNum');
-                        if (dropdown) dropdown.value = '';
-                        if (numInput) numInput.value = '';
+                        if (dropdown && dropdown.value === expectedValue) {
+                            dropdown.value = '';
+                            if (numInput) numInput.value = '';
+                        }
 
                         // Hide associated list in preview
                         const wrapper = document.getElementById('paperAssociatedWrapper');
@@ -424,20 +461,31 @@
         }
 
         // Fetch associated questions under transitive group and populate live preview
-        function loadAssociatedQuestionsInList(questionId) {
+        function loadAssociatedQuestionsInList(questionId, expectedValue) {
+            const session = EditorState.snapshot();
+            const sequence = ++relatedListLoadSequence;
+            ++relatedDropdownLoadSequence;
+            const isCurrent = () => EditorState.isCurrent(session)
+                && sequence === relatedListLoadSequence;
+            const selectionAtRequest = expectedValue !== undefined
+                ? expectedValue : document.getElementById('editRelatedQuestion').value;
             const wrapper = document.getElementById('paperAssociatedWrapper');
             const container = document.getElementById('paperAssociatedList');
             if (wrapper) wrapper.classList.add('hidden');
             if (container) container.innerHTML = '';
             
             if (!questionId) {
-                refreshRelatedDropdown("");
-                return;
+                return refreshRelatedDropdown('', { session, isCurrent, expectedValue: selectionAtRequest });
             }
             
-            fetch(`/api/questions/${questionId}/associated`)
-                .then(r => r.json())
+            return fetch(`/api/questions/${questionId}/associated`)
+                .then(r => {
+                    if (!r.ok) throw new Error('无法加载已关联题目');
+                    return r.json();
+                })
                 .then(list => {
+                    if (!isCurrent()) return false;
+                    if (!Array.isArray(list)) throw new Error('已关联题目格式错误');
                     let associatedId = "";
                     if (list.length > 0) {
                         associatedId = list[0].id;
@@ -461,11 +509,13 @@
                             if (container) container.appendChild(item);
                         });
                     }
-                    refreshRelatedDropdown(associatedId);
+                    return refreshRelatedDropdown(associatedId, {
+                        session, isCurrent, expectedValue: selectionAtRequest, commitBaseline: true
+                    });
                 })
                 .catch(err => {
                     console.error('Failed to load associated questions list:', err);
-                    refreshRelatedDropdown("");
+                    return false;
                 });
         }
 
@@ -670,6 +720,8 @@
                     renderEditorPaperMeta();
                     
                     // Load associated questions list and handle group selection
+                    document.getElementById('editRelatedQuestion').value = '';
+                    document.getElementById('editRelatedQuestionNum').value = '';
                     loadAssociatedQuestionsInList(fullItem.id);
                     
                     // Scroll editor
@@ -965,7 +1017,6 @@
                         // Reload list, dropdown, and autocomplete selectors
                         loadQuestions();
                         loadCategories();
-                        refreshRelatedDropdown(relatedQuestionId);
 
                         if (!editorSession.questionId && editorSessionStillCurrent) {
                             // The POST response already contains the complete saved
@@ -980,6 +1031,9 @@
                             }
                         } else if (editorSessionStillCurrent) {
                             backupEditorState(data.question.id, null, requestBackupSnapshot);
+                        }
+                        if (editorSessionStillCurrent) {
+                            refreshRelatedDropdown(relatedQuestionId, { expectedValue: relatedQuestionId });
                         }
                         return true;
                     } else {

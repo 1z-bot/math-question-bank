@@ -203,6 +203,17 @@ let bankQuestionsRetryTimer = null;
         }
         window.backupEditorState = backupEditorState;
 
+        // Association endpoints save independently of the rest of the editor.
+        // Advance only this field so concurrent content/answer edits stay dirty.
+        function commitEditorRelatedBaseline(session, relatedQuestionId) {
+            if (!originalQuestionState || !EditorState.isCurrent(session)
+                    || originalQuestionState.id !== session.questionId) {
+                return false;
+            }
+            originalQuestionState.related_question_id = String(relatedQuestionId || '');
+            return true;
+        }
+
         function commitEditorFigureLayoutBaseline(
             questionId,
             figureAlign,

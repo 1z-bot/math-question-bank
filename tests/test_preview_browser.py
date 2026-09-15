@@ -110,6 +110,79 @@ def browser(tmp_path_factory):
                     server.wait(timeout=5)
 
 
+def test_association_switching_and_real_unsaved_changes(browser, tmp_path):
+    ids = browser.evaluate(r"""
+    (async () => {
+        selectWorkspace('bank', '题库研讨工作台');
+        const ids = [];
+        for (const content of ['关联回归甲：求 $1+2$。', '关联回归乙：求 $3+4$。']) {
+            const form = new FormData();
+            form.set('content', content);
+            form.set('question_type', 'detailed_answer');
+            form.set('difficulty', 'medium');
+            const res = await fetch('/api/questions', {method: 'POST', body: form});
+            const data = await res.json();
+            if (!res.ok || !data.question) throw new Error(JSON.stringify(data));
+            ids.push(data.question.id);
+        }
+        loadQuestions();
+        return ids;
+    })()
+    """)
+    first, second = ids
+
+    def click_association_action(function_name):
+        selector = f'button[onclick="{function_name}()"]'
+        # The editor scrolls smoothly; settle before the coordinate-based click.
+        browser.command("scrollintoview", selector)
+        browser.settle()
+        browser.command("click", selector)
+
+    def open_question(question_id, related_id):
+        browser.command("wait", "--fn", f"!!document.querySelector('#questionsList [data-id=\"{question_id}\"]')")
+        browser.command("click", f'#questionsList [data-id="{question_id}"]')
+        browser.command("wait", "--fn", (
+            f"EditorState.questionId === {question_id} && !questionDetailLoading"
+            f" && document.getElementById('editRelatedQuestion').value === '{related_id}'"
+            " && !isEditorModified()"
+        ))
+        assert not browser.evaluate("!!document.getElementById('unsavedChangesModalTitle')")
+
+    open_question(first, '')
+    browser.command("wait", "--fn", f"!!document.querySelector('#editRelatedQuestion option[value=\"{second}\"]')")
+    browser.command("select", "#editRelatedQuestion", str(second))
+    assert browser.evaluate("document.getElementById('editRelatedQuestion').value") == str(second)
+    click_association_action("associateRelatedQuestion")
+    browser.settle()
+    assert browser.evaluate(
+        f"fetch('/api/questions/{first}/associated').then(r => r.json())"
+        f".then(qs => qs.some(q => q.id === {second}))"
+    ), browser.evaluate("({selection: document.getElementById('editRelatedQuestion').value, questionId: EditorState.questionId})")
+    browser.command("wait", "--fn", "!isEditorModified() && !document.getElementById('paperAssociatedWrapper').classList.contains('hidden')")
+    for question_id, related_id in [(second, first), (first, second), (second, first), (first, second)]:
+        open_question(question_id, related_id)
+
+    # Real DELETE persists and leaves the editor clean.
+    click_association_action("clearRelatedQuestion")
+    browser.command("wait", "--fn", "document.getElementById('editRelatedQuestion').value === '' && !isEditorModified()")
+    assert browser.evaluate(f"fetch('/api/questions/{first}/associated').then(r => r.json())") == []
+
+    # Linking must not mark a separately edited stem as saved.
+    browser.command("fill", "#editContent", "真正尚未保存的题干修改")
+    browser.command("select", "#editRelatedQuestion", str(second))
+    click_association_action("associateRelatedQuestion")
+    browser.command("wait", "--fn", "!document.getElementById('paperAssociatedWrapper').classList.contains('hidden')")
+    assert browser.evaluate("isEditorModified()")
+    browser.command("click", f'#questionsList [data-id="{second}"]')
+    browser.command("wait", "#unsavedChangesModalTitle")
+    assert browser.evaluate("EditorState.questionId") == first
+    browser.command("screenshot", str(tmp_path / "association-real-unsaved-prompt.png"))
+    # Close the modal without saving test edits, keeping other browser tests independent.
+    browser.command("click", "#cancelBtn")
+    browser.command("fill", "#editContent", "关联回归甲：求 $1+2$。")
+    browser.evaluate("selectWorkspace('paper', '组卷排版工作台'); true")
+
+
 def test_valid_and_naked_table_formulas_render_without_internal_placeholders(browser):
     result = browser.evaluate(r"""
     (() => {
