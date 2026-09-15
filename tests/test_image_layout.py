@@ -146,6 +146,73 @@ if(images[1].style.maxHeight!=='240px') throw Error('trailing group size was ign
     assert result.returncode==0,result.stderr
 
 
+@pytest.mark.parametrize('anchored_content', [
+    '![](/static/uploads/a_1.png)',
+    r'\begin{tabular}{cc}![](/static/uploads/a_1.png) & $t$\end{tabular}',
+    r'\begin{choices}\item ![](/static/uploads/a_1.png)\item $1$\end{choices}',
+])
+def test_math_repair_preserves_individual_image_layout_through_editor_and_paper(anchored_content):
+    """Exercise the merged formula/image pipeline, including the resolved parameter conflict."""
+    from lxml import html
+
+    root = Path(__file__).resolve().parents[1]
+    api = (root / 'static/js/api.js').read_text()
+    shared = api[api.index('window.ImageLayoutTools = {'):api.index('const FigureLayoutState = {')]
+    editor = (root / 'static/js/editor.js').read_text()
+    editor_start = editor.index('function transformFillinMacro(clean)')
+    editor_end_marker = 'window.parseMarkdownWithMath = parseMarkdownWithMath;'
+    editor_end = editor.index(editor_end_marker, editor_start) + len(editor_end_marker)
+    paper = (root / 'static/js/paper.js').read_text()
+    paper_start = paper.index('function shouldPreserveInlinePaperImages(raw)')
+    paper_end = paper.index('// Init on DOMContentLoaded', paper_start)
+    source = (r'向量 \mathbf{a}。前文111' + '\n\n' + anchored_content
+              + '\n\n后文222 $x^2 +\ny^2 = 1$。\n\n![](/static/uploads/b_2.png)')
+    layouts = {'a_1.png': {'align': 'left', 'size': 'small'}}
+    script = '''
+global.window = { MathBankSafe: {
+    safeImageUrl: value => value,
+    escapeAttribute: value => value,
+    sanitizeRichHtml: value => value
+} };
+''' + shared + editor[editor_start:editor_end] + paper[paper_start:paper_end] + f'''
+const source = {json.dumps(source)};
+const layouts = {json.dumps(layouts)};
+console.log(JSON.stringify({{
+    editor: window.parseMarkdownWithMath(source, layouts),
+    paper: formatQuestionContentHtml(source, 101, 'bottom_right', false, false, 'medium', layouts),
+    embedded: formatQuestionContentHtml(source, 101, 'bottom_right', true, false, 'medium', layouts)
+}}));
+'''
+    node = shutil.which('node')
+    assert node, 'Node.js is required for the frontend executable regression'
+    result = subprocess.run([node, '-e', script], cwd=root, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    rendered = json.loads(result.stdout)
+    for name in ('editor', 'paper'):
+        markup = rendered[name]
+        tree = html.fragment_fromstring(markup, create_parent='div')
+        images = tree.xpath('.//img')
+        assert [image.get('src') for image in images] == [
+            '/static/uploads/a_1.png', '/static/uploads/b_2.png'
+        ], name
+        assert 'mb-inline-image-size-small' in images[0].get('class', ''), name
+        assert 'mb-inline-image-align-left' in images[0].getparent().get('class', ''), name
+        assert markup.index('前文111') < markup.index('a_1.png') < markup.index('后文222') < markup.index('b_2.png'), name
+        assert r'$\mathbf{a}$' in markup, name
+        assert '$x^2 +\ny^2 = 1$' in markup, name
+        assert '@@MATH_PLACEHOLDER_' not in markup, name
+        if 'tabular' in anchored_content:
+            assert len(tree.xpath('.//td//img')) == 1, name
+        if 'choices' in anchored_content:
+            assert len(tree.xpath('.//span[contains(@class,"choices-content")]//img')) == 1, name
+
+    embedded = rendered['embedded']
+    assert 'a_1.png' in embedded['stemHtml'] and 'b_2.png' not in embedded['stemHtml']
+    assert 'b_2.png' in embedded['imgHtml'] and 'a_1.png' not in embedded['imgHtml']
+    assert 'mb-inline-image-size-small' in embedded['stemHtml']
+    assert 'data-figure-size="medium"' in embedded['imgHtml']
+
+
 @pytest.mark.skipif(os.environ.get('MATHBANK_TEST_TIKZ_NATIVE')!='1', reason='opt-in XeLaTeX')
 def test_native_mixed_tikz_and_table_layout(tmp_path):
     import pymupdf as fitz

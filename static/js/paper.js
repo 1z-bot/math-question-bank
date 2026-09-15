@@ -1751,20 +1751,28 @@
         if (sheet && !cartIncomplete) {
             rebalanceA4PaperPages(sheet, meta, totalCount, totalScore);
 
+            let resizeObserver = null;
             const repaginateAfterLayoutChange = () => {
-                if (!sheet.isConnected) {
-                    if (window.activeA4PaginationResizeObserver) {
-                        window.activeA4PaginationResizeObserver.disconnect();
+                if (!sheet.isConnected || window.scheduleActiveA4Repagination !== repaginateAfterLayoutChange) {
+                    if (resizeObserver) resizeObserver.disconnect();
+                    if (window.activeA4PaginationResizeObserver === resizeObserver) {
                         window.activeA4PaginationResizeObserver = null;
                     }
                     return;
                 }
+                // The drag placeholder changes block heights. Keep pages still
+                // until drop/cancel removes it and renders the final cart.
+                if (draggedItemData) return;
                 if (window.activeA4PaginationFrame) return;
                 if (typeof requestAnimationFrame === 'function') {
-                    window.activeA4PaginationFrame = requestAnimationFrame(() => {
-                        window.activeA4PaginationFrame = null;
-                        rebalanceA4PaperPages(sheet, meta, totalCount, totalScore);
+                    const frame = requestAnimationFrame(() => {
+                        if (window.activeA4PaginationFrame === frame) window.activeA4PaginationFrame = null;
+                        if (sheet.isConnected && !draggedItemData
+                                && window.scheduleActiveA4Repagination === repaginateAfterLayoutChange) {
+                            rebalanceA4PaperPages(sheet, meta, totalCount, totalScore);
+                        }
                     });
+                    window.activeA4PaginationFrame = frame;
                 } else {
                     rebalanceA4PaperPages(sheet, meta, totalCount, totalScore);
                 }
@@ -1772,9 +1780,11 @@
             window.scheduleActiveA4Repagination = repaginateAfterLayoutChange;
 
             if (typeof ResizeObserver !== 'undefined') {
-                const resizeObserver = new ResizeObserver(repaginateAfterLayoutChange);
+                resizeObserver = new ResizeObserver(repaginateAfterLayoutChange);
                 resizeObserver.observe(sheet);
                 sheet.querySelectorAll('.paper-page-block').forEach(block => resizeObserver.observe(block));
+                const header = sheet.querySelector('.paper-page-header');
+                if (header) resizeObserver.observe(header);
                 window.activeA4PaginationResizeObserver = resizeObserver;
             }
             sheet.querySelectorAll('img').forEach(image => {
@@ -1941,24 +1951,56 @@
 
     function createMeasuredA4Page(meta, totalCount, totalScore, pageIndex, totalPages, pageLimit, blocks) {
         const page = document.createElement('div');
-        const hasOversizeBlock = blocks.some(block => block.height > pageLimit);
-        page.className = 'a4-paper-sheet w-full max-w-[794px] h-[1123px] bg-white text-slate-900 px-10 py-12 shadow-2xl rounded-sm border border-slate-300 font-serif leading-relaxed relative overflow-hidden select-none mb-8'
-            + (hasOversizeBlock ? ' a4-paper-sheet--expanded' : '');
-        page.dataset.paperPageIndex = String(pageIndex);
-        page.dataset.paperPageExpanded = hasOversizeBlock ? 'true' : 'false';
+        page.className = 'a4-paper-sheet w-full max-w-[794px] h-[1123px] bg-white text-slate-900 px-10 py-12 shadow-2xl rounded-sm border border-slate-300 font-serif leading-relaxed relative overflow-hidden select-none mb-8';
         page.innerHTML = `
             ${pageIndex === 0 ? `<div class="paper-page-header">${renderA4Header(meta, totalCount, totalScore, totalPages)}</div>` : ''}
-            ${hasOversizeBlock ? `
-                <div class="paper-oversize-notice" role="status">
-                    本页题目超过单页高度，预览已自动扩展以完整显示；导出时由排版引擎继续分页。
-                </div>
-            ` : ''}
             <div class="paper-page-content space-y-1.5 text-[13px]"></div>
             <div class="paper-page-footer absolute bottom-5 left-0 right-0 text-center text-xs font-serif text-slate-700 tracking-wider">
                 数学 &nbsp; 第 ${pageIndex + 1} 页 (共 ${totalPages} 页)
             </div>
         `;
+        updateMeasuredA4Page(page, pageIndex, totalPages, pageLimit, blocks);
         return page;
+    }
+
+    function updateMeasuredA4Page(page, pageIndex, totalPages, pageLimit, blocks) {
+        const isExpanded = blocks.reduce((height, block) => height + block.height, 0) > pageLimit;
+        page.classList.toggle('a4-paper-sheet--expanded', isExpanded);
+        page.dataset.paperPageIndex = String(pageIndex);
+        page.dataset.paperPageExpanded = isExpanded ? 'true' : 'false';
+        let notice = page.querySelector('.paper-oversize-notice');
+        if (isExpanded && !notice) {
+            notice = document.createElement('div');
+            notice.className = 'paper-oversize-notice';
+            notice.setAttribute('role', 'status');
+            notice.textContent = '本页题目超过单页高度，预览已自动扩展以完整显示；导出时由排版引擎继续分页。';
+            page.insertBefore(notice, page.querySelector('.paper-page-content'));
+        } else if (!isExpanded && notice) {
+            notice.remove();
+        }
+        page.querySelector('.paper-page-footer').textContent = `数学　 第 ${pageIndex + 1} 页 (共 ${totalPages} 页)`;
+    }
+
+    function getA4PageHeightLimits(firstPage, firstContent, firstFooter) {
+        const pageStyle = window.getComputedStyle(firstPage);
+        const footerStyle = window.getComputedStyle(firstFooter);
+        const pageRect = firstPage.getBoundingClientRect();
+        // min-height stays at the standard A4 height even when an oversize page
+        // expands. Never derive capacity from that expanded page's bottom.
+        const standardHeight = parseFloat(pageStyle.minHeight) || 1123;
+        const borderTop = parseFloat(pageStyle.borderTopWidth) || 0;
+        const borderBottom = parseFloat(pageStyle.borderBottomWidth) || 0;
+        const paddingTop = parseFloat(pageStyle.paddingTop) || 0;
+        const footerTop = standardHeight - borderBottom - (parseFloat(footerStyle.bottom) || 0)
+            - firstFooter.getBoundingClientRect().height;
+        const notice = firstPage.querySelector('.paper-oversize-notice');
+        const contentTop = firstContent.getBoundingClientRect().top - pageRect.top
+            - (notice ? getPaperBlockOuterHeight(notice) : 0);
+        const footerGap = 12;
+        return {
+            firstPageLimit: Math.max(0, Math.floor(footerTop - contentTop - footerGap)),
+            laterPageLimit: Math.max(0, Math.floor(footerTop - borderTop - paddingTop - footerGap))
+        };
     }
 
     function rebalanceA4PaperPages(sheet, meta, totalCount, totalScore) {
@@ -1969,14 +2011,7 @@
         const firstFooter = firstPage ? firstPage.querySelector('.paper-page-footer') : null;
         if (!blockNodes.length || !firstPage || !firstContent || !firstFooter) return;
 
-        const pageRect = firstPage.getBoundingClientRect();
-        const contentRect = firstContent.getBoundingClientRect();
-        const footerRect = firstFooter.getBoundingClientRect();
-        const pageStyle = window.getComputedStyle(firstPage);
-        const paddingTop = parseFloat(pageStyle.paddingTop) || 0;
-        const footerGap = 12;
-        const firstPageLimit = Math.max(120, Math.floor(footerRect.top - contentRect.top - footerGap));
-        const laterPageLimit = Math.max(120, Math.floor(footerRect.top - pageRect.top - paddingTop - footerGap));
+        const { firstPageLimit, laterPageLimit } = getA4PageHeightLimits(firstPage, firstContent, firstFooter);
         const measuredBlocks = blockNodes.map(node => ({
             node,
             type: node.dataset.paperBlockType || 'question',
@@ -1992,35 +2027,36 @@
         const newPages = [];
         pages.forEach((blocks, pageIndex) => {
             const pageLimit = pageIndex === 0 ? firstPageLimit : laterPageLimit;
-            const page = createMeasuredA4Page(
-                meta,
-                totalCount,
-                totalScore,
-                pageIndex,
-                pages.length,
-                pageLimit,
-                blocks
-            );
-            sheet.appendChild(page);
+            // Retain existing pages, especially the first page and its editable
+            // header: even reparenting the same header node loses focus/IME.
+            let page = oldPages[pageIndex];
+            if (page) {
+                updateMeasuredA4Page(page, pageIndex, pages.length, pageLimit, blocks);
+            } else {
+                page = createMeasuredA4Page(meta, totalCount, totalScore, pageIndex, pages.length, pageLimit, blocks);
+                sheet.appendChild(page);
+            }
             newPages.push(page);
         });
 
-        if (existingHeader && newPages[0]) {
-            const generatedHeader = newPages[0].querySelector('.paper-page-header');
-            if (generatedHeader) generatedHeader.replaceWith(existingHeader);
+        if (existingHeader) {
             const totalPagesNode = existingHeader.querySelector('[data-paper-total-pages]');
-            if (totalPagesNode) totalPagesNode.textContent = String(pages.length);
+            if (totalPagesNode && totalPagesNode.textContent !== String(pages.length)) {
+                totalPagesNode.textContent = String(pages.length);
+            }
         }
 
         pages.forEach((blocks, pageIndex) => {
             const content = newPages[pageIndex].querySelector('.paper-page-content');
             const pageLimit = pageIndex === 0 ? firstPageLimit : laterPageLimit;
+            let nextNode = content.firstElementChild;
             blocks.forEach(block => {
                 block.node.classList.toggle('paper-page-block--oversize', block.height > pageLimit);
-                content.appendChild(block.node);
+                if (block.node !== nextNode) content.insertBefore(block.node, nextNode);
+                nextNode = block.node.nextElementSibling;
             });
         });
-        oldPages.forEach(page => page.remove());
+        oldPages.slice(pages.length).forEach(page => page.remove());
         sheet.scrollTop = savedScrollTop;
     }
     window.rebalanceA4PaperPages = rebalanceA4PaperPages;
@@ -2393,15 +2429,36 @@
     let draggedItemData = null;
     let dragPlaceholder = null;
 
+    function resetPaperDragTarget() {
+        if (!draggedItemData) return;
+        draggedItemData.target = null;
+        const source = draggedItemData.element;
+        if (dragPlaceholder && source.isConnected && source.parentNode) {
+            source.parentNode.insertBefore(dragPlaceholder, source);
+        }
+    }
+
+    function getPaperDragTargetPosition(cart, questionsMap, qType, sourceId, targetId, placeAfter) {
+        const items = cart.filter(item => {
+            const question = questionsMap[item.id];
+            return question && question.question_type === qType;
+        });
+        const fromIndex = items.findIndex(item => item.id === sourceId);
+        const targetIndex = items.findIndex(item => item.id === targetId);
+        if (fromIndex < 0 || targetIndex < 0 || sourceId === targetId) return null;
+        const insertionIndex = targetIndex + (placeAfter ? 1 : 0);
+        return { fromIndex, toIndex: insertionIndex - (fromIndex < insertionIndex ? 1 : 0) };
+    }
+
     window.onPaperCanvasDragStart = function (e, qid, subIndex, qType) {
         const card = e.currentTarget.closest('.paper-q-item');
         if (!card) return;
 
         draggedItemData = { 
-            qid: parseInt(qid, 10), 
-            fromSubIndex: parseInt(subIndex, 10),
+            qid: parseInt(qid, 10),
             qType: qType,
-            element: card
+            element: card,
+            target: null
         };
 
         e.dataTransfer.effectAllowed = 'move';
@@ -2413,11 +2470,20 @@
             dragPlaceholder.className = 'paper-drag-placeholder border-2 border-dashed border-brand-500 bg-brand-50/70 rounded-xl my-2 flex items-center justify-center text-xs font-semibold text-brand-600 shadow-inner transition-all duration-200 select-none';
             dragPlaceholder.style.height = `${Math.max(48, card.offsetHeight - 8)}px`;
             dragPlaceholder.innerHTML = '<span class="flex items-center space-x-1.5"><i class="fa-solid fa-arrow-down-long text-brand-500 animate-bounce"></i> <span>释放在同题型内插入试题</span></span>';
+            // The placeholder is a sibling of the card, so its drop does not
+            // bubble through the card's inline handlers.
+            dragPlaceholder.addEventListener('dragover', event => {
+                if (draggedItemData && draggedItemData.target) {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = 'move';
+                }
+            });
+            dragPlaceholder.addEventListener('drop', event => window.onPaperCanvasDrop(event));
         }
 
         // Apply drag style to current card after browser creates drag ghost image
         setTimeout(() => {
-            if (card) {
+            if (card.isConnected && draggedItemData && draggedItemData.element === card) {
                 card.classList.add('opacity-30', 'scale-[0.98]', 'bg-slate-100');
                 if (card.parentNode) {
                     card.parentNode.insertBefore(dragPlaceholder, card);
@@ -2431,19 +2497,27 @@
         if (!draggedItemData || !dragPlaceholder) return;
 
         const targetCard = e.target.closest('.paper-q-item');
-        if (!targetCard || targetCard === draggedItemData.element) return;
+        if (!targetCard || targetCard === draggedItemData.element) {
+            if (!dragPlaceholder.contains(e.target)) resetPaperDragTarget();
+            return;
+        }
 
         // Strict boundary: check if targetCard belongs to the SAME question type section!
         const targetQType = targetCard.dataset.qtype;
         if (targetQType !== draggedItemData.qType) {
             // Different question type section! Disallow drag placeholder insertion
             e.dataTransfer.dropEffect = 'none';
+            resetPaperDragTarget();
             return;
         }
 
         e.dataTransfer.dropEffect = 'move';
         const rect = targetCard.getBoundingClientRect();
         const midY = rect.top + rect.height / 2;
+        draggedItemData.target = {
+            qid: parseInt(targetCard.dataset.qid, 10),
+            placeAfter: e.clientY >= midY
+        };
 
         if (e.clientY < midY) {
             if (targetCard.previousElementSibling !== dragPlaceholder) {
@@ -2464,57 +2538,50 @@
         e.preventDefault();
     };
 
-    window.onPaperCanvasDragEnd = function (e) {
+    window.onPaperCanvasDragEnd = function (e, didDrop = false) {
+        const drag = draggedItemData;
+        if (!drag) return;
         const card = e.currentTarget.closest('.paper-q-item');
         if (card) {
             card.classList.remove('opacity-30', 'scale-[0.98]', 'bg-slate-100');
         }
 
-        // Find new index within the SAME question type section
-        if (dragPlaceholder && dragPlaceholder.parentNode && draggedItemData) {
-            const container = dragPlaceholder.parentNode;
-            const allItems = Array.from(container.children);
-            
-            let newSubIndex = 0;
-            for (let i = 0; i < allItems.length; i++) {
-                const child = allItems[i];
-                if (child === dragPlaceholder) {
-                    break;
-                }
-                if (child.classList && child.classList.contains('paper-q-item') && child !== draggedItemData.element) {
-                    newSubIndex++;
-                }
-            }
-
-            const fromSubIndex = draggedItemData.fromSubIndex;
-            const qType = draggedItemData.qType;
-            
-            if (dragPlaceholder.parentNode) {
-                dragPlaceholder.parentNode.removeChild(dragPlaceholder);
-            }
-
-            if (fromSubIndex !== newSubIndex && fromSubIndex >= 0 && newSubIndex >= 0) {
-                window.PaperStore.cart = reorderItemsWithinType(window.PaperStore.cart, qType, fromSubIndex, newSubIndex);
-
-                saveCartToStorage();
-                renderPart3QuestionStream();
-                window.renderPaperCanvas();
-                if (window.showToast) window.showToast(`试题顺序已更新`, 'info');
-            } else {
-                renderPart3QuestionStream();
-                window.renderPaperCanvas();
-            }
-        } else if (dragPlaceholder && dragPlaceholder.parentNode) {
+        if (dragPlaceholder && dragPlaceholder.parentNode) {
             dragPlaceholder.parentNode.removeChild(dragPlaceholder);
         }
-
         draggedItemData = null;
         dragPlaceholder = null;
+        // Each question has its own page-block wrapper. Resolve the insertion
+        // against the cart's same-type IDs, independently of wrappers or pages.
+        const position = didDrop && drag.target ? getPaperDragTargetPosition(
+            window.PaperStore.cart, window.PaperStore.questionsMap,
+            drag.qType, drag.qid, drag.target.qid, drag.target.placeAfter
+        ) : null;
+        const reordered = position && position.fromIndex !== position.toIndex;
+        if (reordered) {
+            window.PaperStore.cart = reorderItemsWithinType(
+                window.PaperStore.cart, drag.qType, position.fromIndex, position.toIndex
+            );
+            saveCartToStorage();
+        }
+        renderPart3QuestionStream();
+        window.renderPaperCanvas();
+        if (reordered && window.showToast) window.showToast('试题顺序已更新', 'info');
     };
 
     window.onPaperCanvasDrop = function (e) {
         e.preventDefault();
-        window.onPaperCanvasDragEnd(e);
+        const drag = draggedItemData;
+        const targetCard = e.target.closest('.paper-q-item');
+        const onPlaceholder = dragPlaceholder && dragPlaceholder.contains(e.target);
+        // A final drop can follow the last dragover at a different position.
+        // Never commit a stale target when released on the source or elsewhere.
+        const validDrop = Boolean(drag && drag.target && (onPlaceholder || (
+            targetCard && targetCard !== drag.element
+            && targetCard.dataset.qtype === drag.qType
+            && parseInt(targetCard.dataset.qid, 10) === drag.target.qid
+        )));
+        window.onPaperCanvasDragEnd(e, validDrop);
     };
 
     // Solution Space Handlers

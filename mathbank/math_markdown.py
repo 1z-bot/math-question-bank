@@ -13,15 +13,20 @@ from collections.abc import Callable
 
 _MATH_RUN_RE = re.compile(r"[A-Za-z0-9\\{}_^+\-*/=<>|(),.:\[\]\t ]+")
 _MATH_COMMAND_RE = re.compile(r"\\([A-Za-z]+)")
-_TABLE_ENVIRONMENT_RE = re.compile(
-    r"\\begin\{(tabular\*?|tabularx|longtable|tblr|longtblr|talltblr)\}"
-    r"[\s\S]*?\\end\{\1\}"
-)
-_MATH_ENVIRONMENT_RE = re.compile(
-    r"\\begin\{(cases|aligned|alignedat|gathered|matrix|pmatrix|bmatrix|"
-    r"Bmatrix|vmatrix|Vmatrix|smallmatrix|array|equation\*?|gather\*?|"
-    r"multline\*?|split)\}[\s\S]*?\\end\{\1\}"
-)
+_TABLE_ENVIRONMENTS = {
+    "tabular", "tabular*", "tabularx", "longtable", "tblr", "longtblr", "talltblr",
+}
+# These environments already enter math mode. Adding dollars makes their
+# otherwise valid source fail when it is later exported to LaTeX.
+_STANDALONE_MATH_ENVIRONMENTS = {
+    "equation", "equation*", "align", "align*", "alignat", "alignat*",
+    "gather", "gather*", "multline", "multline*", "displaymath", "math",
+}
+_INNER_MATH_ENVIRONMENTS = {
+    "cases", "aligned", "alignedat", "gathered", "matrix", "pmatrix",
+    "bmatrix", "Bmatrix", "vmatrix", "Vmatrix", "smallmatrix", "array", "split",
+}
+_ENVIRONMENT_TOKEN_RE = re.compile(r"\\(begin|end)\{([^{}\n]+)\}")
 _NON_MATH_COMMANDS = {
     "begin",
     "bottomrule",
@@ -57,6 +62,68 @@ def _replace_with_placeholders(
     return pattern.sub(save, value)
 
 
+def _is_escaped(value: str, index: int) -> bool:
+    cursor = index - 1
+    while cursor >= 0 and value[cursor] == "\\":
+        cursor -= 1
+    return (index - cursor - 1) % 2 == 1
+
+
+def _replace_delimited_math(value: str, replace: Callable[[str], str]) -> str:
+    """Visit complete math spans without treating escaped dollars as delimiters."""
+    parts: list[str] = []
+    cursor = 0
+    copied = 0
+    while cursor < len(value):
+        opening = next((token for token in ("$$", "$", r"\(", r"\[")
+                        if value.startswith(token, cursor)), None)
+        if opening is None or _is_escaped(value, cursor):
+            cursor += 1
+            continue
+        closing = {r"\(": r"\)", r"\[": r"\]"}.get(opening, opening)
+        end = value.find(closing, cursor + len(opening))
+        while end >= 0 and _is_escaped(value, end):
+            end = value.find(closing, end + len(closing))
+        if end < 0:
+            cursor += len(opening)
+            continue
+        end += len(closing)
+        parts.extend((value[copied:cursor], replace(value[cursor:end])))
+        cursor = copied = end
+    parts.append(value[copied:])
+    return "".join(parts)
+
+
+def _replace_latex_environments(value: str, replace: Callable[[str, str], str]) -> str:
+    """Protect complete outer structures, including nested cases/matrices/tables."""
+    recognized = _TABLE_ENVIRONMENTS | _STANDALONE_MATH_ENVIRONMENTS | _INNER_MATH_ENVIRONMENTS
+    parts: list[str] = []
+    copied = 0
+    cursor = 0
+    while match := _ENVIRONMENT_TOKEN_RE.search(value, cursor):
+        cursor = match.end()
+        kind, name = match.groups()
+        if kind != "begin" or name not in recognized or _is_escaped(value, match.start()):
+            continue
+        stack = [name]
+        for token in _ENVIRONMENT_TOKEN_RE.finditer(value, cursor):
+            if _is_escaped(value, token.start()):
+                continue
+            action, nested_name = token.groups()
+            if action == "begin":
+                stack.append(nested_name)
+            elif nested_name != stack[-1]:
+                break  # Preserve malformed structure; do not guess a repair.
+            else:
+                stack.pop()
+            if not stack:
+                parts.extend((value[copied:match.start()], replace(value[match.start():token.end()], name)))
+                cursor = copied = token.end()
+                break
+    parts.append(value[copied:])
+    return "".join(parts)
+
+
 def _protect_non_candidates(value: str) -> tuple[str, Callable[[str], str]]:
     placeholders: list[tuple[str, str]] = []
     protected = value
@@ -85,36 +152,17 @@ def _protect_non_candidates(value: str) -> tuple[str, Callable[[str], str]]:
         re.compile(r"\[ILLUSTRATION_BOX:\s*[^\]\n]*\]", re.IGNORECASE),
         placeholders,
     )
-    protected = _replace_with_placeholders(
+    def save(original: str) -> str:
+        marker = f"\ue000{len(placeholders)}\ue001"
+        placeholders.append((marker, original))
+        return marker
+
+    protected = _replace_delimited_math(protected, save)
+    protected = _replace_latex_environments(
         protected,
-        re.compile(r"\$\$[\s\S]*?\$\$"),
-        placeholders,
-    )
-    protected = _replace_with_placeholders(
-        protected,
-        re.compile(r"\\\[[\s\S]*?\\\]"),
-        placeholders,
-    )
-    protected = _replace_with_placeholders(
-        protected,
-        re.compile(r"\\\([\s\S]*?\\\)"),
-        placeholders,
-    )
-    protected = _replace_with_placeholders(
-        protected,
-        re.compile(r"\$[\s\S]*?\$"),
-        placeholders,
-    )
-    protected = _replace_with_placeholders(
-        protected,
-        _TABLE_ENVIRONMENT_RE,
-        placeholders,
-    )
-    protected = _replace_with_placeholders(
-        protected,
-        _MATH_ENVIRONMENT_RE,
-        placeholders,
-        lambda environment: f"${environment.strip()}$",
+        lambda environment, name: save(
+            f"${environment}$" if name in _INNER_MATH_ENVIRONMENTS else environment
+        ),
     )
     patterns = (
         re.compile(r"\\(?:begin|end)\{[^}\n]+\}"),
@@ -174,7 +222,8 @@ def normalize_question_math_markdown(value: str) -> str:
 
     Existing math blocks, Markdown images, content-lock references, table
     environments and structural LaTeX commands are preserved byte-for-byte.
-    Naked math environments are wrapped as a whole. Explicit typography such
+    Inner math environments are wrapped as a whole; standalone display math
+    retains its original, exportable delimiters. Explicit typography such
     as ``\\mathbf`` or ``\\boldsymbol`` is never inferred from prose.
     """
 

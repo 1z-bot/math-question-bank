@@ -1883,14 +1883,14 @@ let bankQuestionsRetryTimer = null;
             let source = String(text);
 
             const placeholders = [];
+            function save(original) {
+                const marker = `\uE000${placeholders.length}\uE001`;
+                placeholders.push({ marker, original });
+                return marker;
+            }
             function protect(pattern, transform) {
                 source = source.replace(pattern, function(match) {
-                    const marker = `\uE000${placeholders.length}\uE001`;
-                    placeholders.push({
-                        marker,
-                        original: typeof transform === 'function' ? transform(match) : match
-                    });
-                    return marker;
+                    return save(typeof transform === 'function' ? transform(match) : match);
                 });
             }
 
@@ -1900,17 +1900,29 @@ let bankQuestionsRetryTimer = null;
                 /!\[[^\]\n]*\]\([^\n)]*\)/g,
                 /\[\[MBM_[A-Za-z0-9_:-]+\]\]/g,
                 /\[ILLUSTRATION_BOX:\s*[^\]\n]*\]/gi,
-                /\$\$[\s\S]*?\$\$/g,
-                /\\\[[\s\S]*?\\\]/g,
-                /\\\([\s\S]*?\\\)/g,
-                /\$[\s\S]*?\$/g,
-                /\\begin\{(tabular\*?|tabularx|longtable|tblr|longtblr|talltblr)\}[\s\S]*?\\end\{\1\}/g
+                // Cells already contain these tokens when table rendering
+                // reaches this helper. They must survive until final restore.
+                /@@MATH_PLACEHOLDER_\d+@@/g
             ].forEach(function(pattern) { protect(pattern); });
 
-            protect(
-                /\\begin\{(cases|aligned|alignedat|gathered|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|smallmatrix|array|equation\*?|gather\*?|multline\*?|split)\}[\s\S]*?\\end\{\1\}/g,
-                function(environment) { return '$' + environment.trim() + '$'; }
-            );
+            source = replaceDelimitedMathForPreview(source, save);
+            source = replaceLatexEnvironmentsForPreview(source, function(environment, name, body) {
+                if (/^(tabular\*?|tabularx|longtable|tblr|longtblr|talltblr)$/.test(name)) {
+                    return save(environment);
+                }
+                if (/^(equation\*?|align\*?|alignat\*?|gather\*?|multline\*?|displaymath)$/.test(name)) {
+                    // KaTeX has no multline environment. Preserve every row
+                    // in a centered gathered preview; stored/exported TeX is unchanged.
+                    const innerEnvironment = /^alignat/.test(name) ? 'alignedat'
+                        : /^align/.test(name) ? 'aligned'
+                        : /^(gather|multline)/.test(name) ? 'gathered' : '';
+                    const preview = innerEnvironment
+                        ? '\\begin{' + innerEnvironment + '}' + body + '\\end{' + innerEnvironment + '}'
+                        : body;
+                    return save('$$' + preview + '$$');
+                }
+                return save('$' + (name === 'math' ? body : environment) + '$');
+            });
 
             [
                 /\\(?:begin|end)\{[^}\n]+\}/g,
@@ -1947,6 +1959,74 @@ let bankQuestionsRetryTimer = null;
             });
             return source;
         }
+
+        function isLatexTokenEscaped(text, index) {
+            let cursor = index - 1;
+            while (cursor >= 0 && text[cursor] === '\\') cursor--;
+            return (index - cursor - 1) % 2 === 1;
+        }
+
+        function replaceDelimitedMathForPreview(text, replace) {
+            const parts = [];
+            let cursor = 0;
+            let copied = 0;
+            while (cursor < text.length) {
+                const opening = ['$$', '$', '\\(', '\\['].find(token => text.startsWith(token, cursor));
+                if (!opening || isLatexTokenEscaped(text, cursor)) {
+                    cursor++;
+                    continue;
+                }
+                const closing = opening === '\\(' ? '\\)' : opening === '\\[' ? '\\]' : opening;
+                let end = text.indexOf(closing, cursor + opening.length);
+                while (end >= 0 && isLatexTokenEscaped(text, end)) {
+                    end = text.indexOf(closing, end + closing.length);
+                }
+                if (end < 0) {
+                    cursor += opening.length;
+                    continue;
+                }
+                const finish = end + closing.length;
+                parts.push(text.slice(copied, cursor), replace(
+                    text.slice(cursor, finish), text.slice(cursor + opening.length, end), opening, closing
+                ));
+                cursor = copied = finish;
+            }
+            parts.push(text.slice(copied));
+            return parts.join('');
+        }
+
+        function replaceLatexEnvironmentsForPreview(text, replace) {
+            const recognized = /^(tabular\*?|tabularx|longtable|tblr|longtblr|talltblr|equation\*?|align\*?|alignat\*?|gather\*?|multline\*?|displaymath|math|cases|aligned|alignedat|gathered|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|smallmatrix|array|split)$/;
+            const tokenPattern = /\\(begin|end)\{([^{}\n]+)\}/g;
+            const parts = [];
+            let copied = 0;
+            let match;
+            while ((match = tokenPattern.exec(text))) {
+                const name = match[2];
+                if (match[1] !== 'begin' || !recognized.test(name) || isLatexTokenEscaped(text, match.index)) continue;
+                const bodyStart = tokenPattern.lastIndex;
+                const nestedPattern = /\\(begin|end)\{([^{}\n]+)\}/g;
+                nestedPattern.lastIndex = bodyStart;
+                const stack = [name];
+                let nested;
+                while ((nested = nestedPattern.exec(text))) {
+                    if (isLatexTokenEscaped(text, nested.index)) continue;
+                    if (nested[1] === 'begin') stack.push(nested[2]);
+                    else if (nested[2] !== stack[stack.length - 1]) break;
+                    else stack.pop();
+                    if (stack.length === 0) {
+                        const end = nestedPattern.lastIndex;
+                        parts.push(text.slice(copied, match.index), replace(
+                            text.slice(match.index, end), name, text.slice(bodyStart, nested.index)
+                        ));
+                        copied = tokenPattern.lastIndex = end;
+                        break;
+                    }
+                }
+            }
+            parts.push(text.slice(copied));
+            return parts.join('');
+        }
         window.normalizeNakedMathForPreview = normalizeNakedMathForPreview;
 
         function preprocessFormulaForKaTeX(text, imageLayouts = {}) {
@@ -1967,14 +2047,14 @@ let bankQuestionsRetryTimer = null;
             clean = transformFillinMacro(clean);
 
             // Safely escape raw < and > inside math environments to \lt and \gt without lookbehind regex for maximum browser compatibility
-            clean = clean.replace(/\$([^\$]+?)\$/g, function(match, inner) {
+            clean = replaceDelimitedMathForPreview(clean, function(match, inner, opening, closing) {
                 let safeInner = inner.replace(/\\</g, '@@ESCAPED_LESS@@')
                                      .replace(/</g, '\\lt ')
                                      .replace(/@@ESCAPED_LESS@@/g, '\\<')
                                      .replace(/\\>/g, '@@ESCAPED_GREAT@@')
                                      .replace(/>/g, '\\gt ')
                                      .replace(/@@ESCAPED_GREAT@@/g, '\\>');
-                return '$' + safeInner + '$';
+                return opening + safeInner + closing;
             });
 
             // Clean up illegal nesting like \underline{\quad $\mathbf{14}$ \quad} in KaTeX
@@ -2003,15 +2083,7 @@ let bankQuestionsRetryTimer = null;
             }
             
             let tempText = clean;
-            tempText = tempText.replace(/\$\$([\s\S]*?)\$\$/g, savePlaceholder)
-                               .replace(/\\\[([\s\S]*?)\\\]/g, savePlaceholder)
-                               .replace(/\\\(([\s\S]*?)\\\)/g, savePlaceholder)
-                               .replace(/\$([^\$]+?)\$/g, savePlaceholder);
-            
-            // Auto-heal exposed LaTeX math environments (e.g. \begin{cases}...\end{cases}) that lack $...$ wrapper
-            tempText = tempText.replace(/\\begin\{(cases|aligned|matrix|pmatrix|bmatrix|array|equation|gather)\}([\s\S]*?)\\end\{\1\}/g, function(match) {
-                return savePlaceholder('$' + match.trim() + '$');
-            });
+            tempText = replaceDelimitedMathForPreview(tempText, savePlaceholder);
             
             // Strip HTML tags from non-math parts
             tempText = tempText.replace(/<[^>]*>/g, '');

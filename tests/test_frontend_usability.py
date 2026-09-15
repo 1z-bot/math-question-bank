@@ -400,7 +400,6 @@ def test_a4_preview_paginates_by_measured_height_and_keeps_every_question():
     assert "resizeObserver.observe(block)" in paper_source
     assert "window.scheduleActiveA4Repagination" in paper_source
     assert "sheet.innerHTML = '';" not in paper_source
-    assert "generatedHeader.replaceWith(existingHeader)" in paper_source
     assert "a4-paper-sheet--expanded" in paper_source
     assert "预览已自动扩展以完整显示" in paper_source
     assert re.search(

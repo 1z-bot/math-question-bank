@@ -1,3 +1,9 @@
+import os
+import shutil
+import subprocess
+
+import pytest
+
 from mathbank.math_markdown import normalize_question_math_markdown
 
 
@@ -94,6 +100,73 @@ def test_preserves_illustration_protocol_marker_until_ocr_cleanup():
 
     assert normalized.endswith("[ILLUSTRATION_BOX: 10, 20, 90, 80]")
     assert "$[ILLUSTRATION_BOX" not in normalized
+
+
+@pytest.mark.parametrize("environment", [
+    "equation", "equation*", "align", "align*", "alignat", "alignat*",
+    "gather", "gather*", "multline", "multline*", "displaymath", "math",
+])
+def test_standalone_math_remains_valid_export_source(environment):
+    body = r"{1} x &= 1" if environment.startswith("alignat") else "x=1"
+    source = rf"\begin{{{environment}}}{body}\end{{{environment}}}"
+
+    assert normalize_question_math_markdown(source) == source
+    assert normalize_question_math_markdown(normalize_question_math_markdown(source)) == source
+
+
+def test_balanced_nested_environments_are_not_split_at_the_first_end():
+    cases = (
+        r"\begin{cases} x & x>0 \\ "
+        r"\begin{cases} y & y>0 \\ 0 & y=0 \end{cases} & x<0 \end{cases}"
+    )
+    equation = r"\begin{equation} f(x)=" + cases + r"\end{equation}"
+    table = r"\begin{tabular}{c} \begin{tabular}{c}$x_1$\end{tabular}\end{tabular}"
+
+    assert normalize_question_math_markdown(cases) == "$" + cases + "$"
+    assert normalize_question_math_markdown(equation) == equation
+    assert normalize_question_math_markdown(table) == table
+
+
+def test_escaped_dollars_do_not_change_the_neighboring_math_boundaries():
+    source = r"价格 \$5，原式 $x+\text{\$5}$，另有 y_1=2。"
+
+    assert normalize_question_math_markdown(source) == (
+        r"价格 \$5，原式 $x+\text{\$5}$，另有 $y_1=2$。"
+    )
+    assert normalize_question_math_markdown(r"已有 $a$$b$$c$。") == r"已有 $a$$b$$c$。"
+
+
+@pytest.mark.skipif(
+    os.environ.get("MATHBANK_TEST_MATH_NATIVE") != "1" or not shutil.which("xelatex"),
+    reason="Set MATHBANK_TEST_MATH_NATIVE=1 with XeLaTeX installed",
+)
+def test_normalized_standalone_environments_compile_after_export_cleanup(tmp_path):
+    from mathbank.paper_helper import clean_content_for_latex
+
+    sources = [
+        r"\begin{equation}x=1\end{equation}",
+        r"\begin{equation*}f(x)=\begin{cases}x&x>0\\-x&x\leq0\end{cases}\end{equation*}",
+        r"\begin{align}x&=1\\y&=2\end{align}",
+        r"\begin{align*}x&=1\\y&=2\end{align*}",
+        r"\begin{alignat}{1}x&=1\\y&=2\end{alignat}",
+        r"\begin{gather}x=1\\y=2\end{gather}",
+        r"\begin{gather*}x=1\\y=2\end{gather*}",
+        r"\begin{multline}x+y+z\\=1\end{multline}",
+        r"\begin{multline*}x+y+z\\=1\end{multline*}",
+    ]
+    exported = [clean_content_for_latex(normalize_question_math_markdown(source)) for source in sources]
+    tex_path = tmp_path / "normalized-environments.tex"
+    tex_path.write_text(
+        "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n"
+        + "\n\n".join(exported) + "\n\\end{document}\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [shutil.which("xelatex"), "-interaction=nonstopmode", "-halt-on-error", tex_path.name],
+        cwd=tmp_path, capture_output=True, text=True, timeout=60, check=False,
+    )
+    assert result.returncode == 0, result.stdout[-5000:] + result.stderr
+    assert tex_path.with_suffix(".pdf").is_file()
 
 
 def test_does_not_wrap_plain_chinese_or_ordinary_english_words():
