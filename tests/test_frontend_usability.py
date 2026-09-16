@@ -1188,7 +1188,6 @@ def test_static_dialogs_expose_modal_semantics_and_accessible_names():
         "settingsModal": "settingsModalTitle",
         "updateModal": "updateModalTitle",
         "statsModal": "statsModalTitle",
-        "latexImportModal": "latexImportModalTitle",
         "parsedDuplicateReviewModal": "parsedDuplicateReviewTitle",
         "pdfCropModal": "pdfCropModalTitle",
         "answerTikzWorkbenchModal": "answerTikzWorkbenchTitle",
@@ -1330,7 +1329,7 @@ def test_mobile_layout_touch_targets_and_dialog_panes_have_regression_guards():
         "#bankWorkspaceSection",
         "#paperWorkspaceSection",
         "#previewSection",
-        "#latexImportModalContent",
+        ".import-workspace-content",
         "#pdfCropModalContent",
         "#pdfPagesThumbnailsContainer",
         '.question-card button[aria-label="删除题目"]',
@@ -1345,15 +1344,18 @@ def test_mobile_layout_touch_targets_and_dialog_panes_have_regression_guards():
         assert marker in css_source
 
     assert "html.init-ws-paper #paperWorkspaceSection { display: flex !important; }" in css_source
+    assert "#bankWorkspaceSection.bank-browser.hidden" in css_source
+    assert "#importWorkspaceSection.hidden" in css_source
     assert "sidebar-pagination-controls" in _read(STATIC_JS_DIR / "editor.js")
 
 
-def test_application_shell_navigation_reuses_existing_workspaces_and_import_modal():
+def test_application_shell_navigation_reuses_three_peer_workspaces():
     elements = _index_elements()
     index_source = _read(INDEX_PATH)
     css_source = _read(CSS_PATH)
     api_source = _read(STATIC_JS_DIR / "api.js")
     import_source = _read(STATIC_JS_DIR / "import.js")
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
 
     assert elements["appNavigation"]["aria-label"] == "MathBank 主导航"
     assert elements["appNavPrimary"]["aria-label"] == "主要工作区"
@@ -1363,16 +1365,19 @@ def test_application_shell_navigation_reuses_existing_workspaces_and_import_moda
     assert elements["appNavPaper"]["data-app-nav-target"] == "paper"
 
     assert "selectWorkspace('bank', '题库管理')" in index_source
-    assert "openImportModal()" in index_source
+    assert "selectWorkspace('import', '导入中心')" in index_source
     assert "selectWorkspace('paper', '智能组卷')" in index_source
     assert 'id="appContentShell"' in index_source
 
     assert "window.setAppNavigationActive = function(targetId)" in api_source
     assert "button.setAttribute('aria-current', 'page')" in api_source
     assert "window.setAppNavigationActive(workspaceId)" in api_source
-    assert "modal.dataset.returnNavTarget" in import_source
-    assert "window.setAppNavigationActive('import')" in import_source
-    assert "window.setAppNavigationActive(returnNavTarget)" in import_source
+    assert "function openImportModal()" in import_source
+    assert "window.selectWorkspace('import', '导入中心')" in import_source
+    assert "const importWorkspaceSection = document.getElementById('importWorkspaceSection')" in paper_source
+    assert "mainWorkspaceContainer.insertBefore(importWorkspaceSection, paperWorkspaceSection)" in paper_source
+    assert "workspaceId === 'import'" in paper_source
+    assert "importSec.classList.remove('hidden')" in paper_source
 
     for marker in (
         ".app-navigation",
@@ -1382,6 +1387,72 @@ def test_application_shell_navigation_reuses_existing_workspaces_and_import_moda
         "padding-bottom: 64px",
     ):
         assert marker in css_source
+
+
+def test_import_center_reuses_existing_pipeline_in_a_dedicated_workspace():
+    elements = _index_elements()
+    index_source = _read(INDEX_PATH)
+    css_source = _read(CSS_PATH)
+    import_source = _read(STATIC_JS_DIR / "import.js")
+
+    for element_id in (
+        "importWorkspaceSection",
+        "importWorkspaceTitle",
+        "importWorkspaceContent",
+        "importInputPane",
+        "importPaperTitle",
+        "texDropzone",
+        "texFileInput",
+        "importLatexContent",
+        "texImagesSection",
+        "imagesDropzone",
+        "imagesFileInput",
+        "importGenerateAnswers",
+        "pdfPageRangeContainer",
+        "pdfPageRange",
+        "runParseBtn",
+        "resetAllImportBtn",
+        "importReviewPane",
+        "importPlaceholder",
+        "importLoadingState",
+        "importLogsConsole",
+        "btnCancelImport",
+        "parsedQuestionsWrapper",
+        "parsedCardsContainer",
+        "saveAllParsedBtn",
+    ):
+        assert element_id in elements
+
+    for marker in (
+        "import-workspace-section",
+        "import-workspace-shell",
+        "import-workspace-header",
+        "import-workspace-heading",
+        "import-workspace-steps",
+        "import-workspace-content",
+        "import-source-pane",
+        "import-result-pane",
+        "import-config-card",
+        "import-primary-actions",
+        "import-result-placeholder",
+    ):
+        assert marker in index_source
+
+    assert "PDF、Word 与 LaTeX 试卷的拆解、审查和批量入库" in index_source
+    assert "runAIPaperParse()" in index_source
+    assert "confirmClearAllParsed()" in index_source
+    assert "saveAllParsedQuestions()" in index_source
+    assert "function openImportModal()" in import_source
+    assert "function closeImportModal()" in import_source
+    assert "Import center workspace" in css_source
+    assert ".import-workspace-section" in css_source
+    assert "#importInputPane.import-source-pane" in css_source
+    assert "#importReviewPane.import-result-pane" in css_source
+
+    workspace = elements["importWorkspaceSection"]
+    assert "role" not in workspace
+    assert "aria-modal" not in workspace
+    assert workspace["aria-labelledby"] == "importWorkspaceTitle"
 
 
 def test_bank_browser_uses_detail_first_layout_and_card_based_editor_dialog():
@@ -1441,7 +1512,7 @@ def test_bank_browser_uses_detail_first_layout_and_card_based_editor_dialog():
     assert 'id="filterSource"' in index_source
     assert '<option value="desc" selected>最近更新</option>' in index_source
     assert 'onclick="openNewQuestionEditor()"' in index_source
-    assert 'onclick="openImportModal()"' in index_source
+    assert 'onclick="selectWorkspace(\'import\', \'导入中心\')"' in index_source
     assert 'role="separator"' in index_source
     assert 'aria-orientation="vertical"' in index_source
     assert "openQuestionEditorModal('classification')" in index_source

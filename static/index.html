@@ -97,7 +97,7 @@
                 <i class="fa-solid fa-database" aria-hidden="true"></i>
                 <span>题库管理</span>
             </button>
-            <button type="button" id="appNavImport" class="app-nav-item" data-app-nav-target="import" onclick="openImportModal()">
+            <button type="button" id="appNavImport" class="app-nav-item" data-app-nav-target="import" onclick="selectWorkspace('import', '导入中心')">
                 <i class="fa-solid fa-file-import" aria-hidden="true"></i>
                 <span>导入中心</span>
             </button>
@@ -265,7 +265,7 @@
                     </span>
                 </div>
                 <div class="bank-management-actions">
-                    <button onclick="openImportModal()" class="glass-btn bank-import-btn flex items-center justify-center space-x-1.5 rounded-xl font-medium text-xs text-slate-600">
+                    <button onclick="selectWorkspace('import', '导入中心')" class="glass-btn bank-import-btn flex items-center justify-center space-x-1.5 rounded-xl font-medium text-xs text-slate-600">
                         <i class="fa-solid fa-file-import text-[10px]"></i>
                         <span>导入试卷</span>
                     </button>
@@ -1732,33 +1732,40 @@
         </div>
     </div>
 
-    <!-- LATEX BATCH IMPORT MODAL - Apple Glass Style -->
-    <div id="latexImportModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="latexImportModalTitle" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
-        <div class="glass-modal rounded-2xl w-full max-w-6xl h-[90vh] flex flex-col transform scale-95 transition-transform duration-300 overflow-hidden">
-            <!-- Modal Header -->
-            <div class="flex justify-between items-center border-b border-slate-200/50 px-6 py-4 shrink-0">
-                <h3 id="latexImportModalTitle" class="font-bold text-lg text-slate-800 flex items-center space-x-2">
-                    <i class="fa-solid fa-file-import text-brand-600"></i>
-                    <span>LaTeX 试卷智能拆解导入与配图自动关联</span>
-                </h3>
-                <button type="button" data-modal-close onclick="closeImportModal()" aria-label="关闭试卷智能拆解弹窗" class="glass-btn w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600 transition-all">
-                    <i class="fa-solid fa-xmark text-lg"></i>
-                </button>
+    <!-- IMPORT CENTER WORKSPACE: moved beside the bank and paper workspaces at runtime. -->
+    <section id="importWorkspaceSection" aria-labelledby="importWorkspaceTitle" class="import-workspace-section hidden w-full h-full overflow-hidden">
+        <div class="import-workspace-shell flex w-full flex-col overflow-hidden">
+            <!-- Workspace Header -->
+            <div class="import-workspace-header flex justify-between items-center border-b border-slate-200/50 px-6 py-4 shrink-0">
+                <div class="import-workspace-heading">
+                    <span class="import-workspace-heading-icon" aria-hidden="true"><i class="fa-solid fa-file-import"></i></span>
+                    <div>
+                        <h3 id="importWorkspaceTitle" class="font-bold text-lg text-slate-800">导入中心</h3>
+                        <p>PDF、Word 与 LaTeX 试卷的拆解、审查和批量入库</p>
+                    </div>
+                </div>
             </div>
 
-            <!-- Modal Content (Split Pane) -->
-            <div id="latexImportModalContent" class="flex-1 flex overflow-hidden">
+            <ol class="import-workspace-steps" aria-label="试卷导入流程">
+                <li class="is-current"><span>1</span><div><strong>选择试卷</strong><small>上传或粘贴原始内容</small></div></li>
+                <li><span>2</span><div><strong>解析配置</strong><small>范围、策略与配图</small></div></li>
+                <li><span>3</span><div><strong>AI 拆解</strong><small>切分题目并匹配属性</small></div></li>
+                <li><span>4</span><div><strong>审查入库</strong><small>校对后批量保存</small></div></li>
+            </ol>
+
+            <!-- Workspace Content (Split Pane) -->
+            <div id="importWorkspaceContent" class="import-workspace-content flex-1 flex overflow-hidden">
                 <!-- Left Pane: Inputs (LaTeX and Images) -->
-                <div id="importInputPane" class="w-5/12 border-r border-slate-200 p-6 overflow-y-auto space-y-4 bg-white/50 flex flex-col">
+                <div id="importInputPane" class="import-source-pane w-5/12 border-r border-slate-200 p-6 overflow-y-auto space-y-4 bg-white/50 flex flex-col">
                     <!-- Step 1: Title -->
-                    <div class="space-y-1.5 shrink-0">
+                    <div class="import-config-card space-y-1.5 shrink-0">
                         <label class="block text-xs font-bold text-slate-500">第一步：试卷标题（作为题目来源，可空）</label>
                         <input type="text" id="importPaperTitle" placeholder="请输入试卷标题，例如：XX中学2025-2026高一期中" 
                                class="w-full px-3.5 py-2 border border-slate-200 rounded-xl outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 transition-all text-xs">
                     </div>
 
                     <!-- Step 2: LaTeX code drag & drop / text area -->
-                    <div class="space-y-1.5 flex-1 flex flex-col min-h-[220px]">
+                    <div class="import-config-card space-y-1.5 flex-1 flex flex-col min-h-[220px]">
                         <label class="block text-xs font-bold text-slate-500 shrink-0">第二步：试卷 LaTeX 源码 / PDF / Word 文件</label>
                         <div id="texDropzone" class="border-2 border-dashed border-slate-200 hover:border-brand-500/80 rounded-xl p-3.5 text-center cursor-pointer transition-all duration-200 bg-white hover:bg-brand-50/20 flex flex-col justify-center items-center shrink-0 mb-2">
                             <i class="fa-solid fa-file-lines text-slate-400 text-xl mb-1.5" id="texFileIcon"></i>
@@ -1770,7 +1777,7 @@
                     </div>
 
                     <!-- Step 3: Optional assets referenced by single-file TeX -->
-                    <div class="space-y-1.5 shrink-0" id="texImagesSection">
+                    <div class="import-config-card space-y-1.5 shrink-0" id="texImagesSection">
                         <label class="block text-xs font-bold text-slate-500">第三步：TeX 配套图片（可选）</label>
                         <div id="imagesDropzone" class="border-2 border-dashed border-slate-200 hover:border-brand-500/80 rounded-xl p-3 text-center cursor-pointer transition-all duration-200 bg-white hover:bg-brand-50/20 flex flex-col justify-center items-center">
                             <i class="fa-solid fa-images text-slate-400 text-xl mb-1.5" id="imagesFileIcon"></i>
@@ -1781,7 +1788,7 @@
                         <div id="importImagesList" class="hidden flex flex-wrap gap-1.5"></div>
                     </div>
 
-                    <div class="flex items-start space-x-3 p-3 bg-slate-50/80 border border-slate-200/60 rounded-xl shrink-0">
+                    <div class="import-config-card import-ai-option flex items-start space-x-3 p-3 bg-slate-50/80 border border-slate-200/60 rounded-xl shrink-0">
                         <input type="checkbox" id="importGenerateAnswers" class="w-4 h-4 text-brand-600 border-slate-300 rounded focus:ring-brand-500 cursor-pointer mt-0.5">
                         <div class="flex-1">
                             <label for="importGenerateAnswers" class="block text-xs font-bold text-slate-700 cursor-pointer">自动生成 AI 解答与详细解析</label>
@@ -1790,7 +1797,7 @@
                     </div>
 
                     <!-- PDF Advanced Parsing Options (Visible only when PDF selected) -->
-                    <div id="pdfPageRangeContainer" class="hidden space-y-2.5 p-3 bg-indigo-50/40 border border-indigo-100 rounded-xl shrink-0">
+                    <div id="pdfPageRangeContainer" class="import-config-card hidden space-y-2.5 p-3 bg-indigo-50/40 border border-indigo-100 rounded-xl shrink-0">
                         <div class="flex items-center justify-between">
                             <label class="block text-xs font-bold text-indigo-950 flex items-center space-x-1.5">
                                 <i class="fa-solid fa-microchip text-brand-600"></i>
@@ -1822,7 +1829,7 @@
                     </div>
 
                     <!-- Step 4: Run AI Parse & Reset buttons -->
-                    <div class="flex items-center space-x-2.5 shrink-0 pt-1">
+                    <div class="import-primary-actions flex items-center space-x-2.5 shrink-0 pt-1">
                         <button onclick="runAIPaperParse()" id="runParseBtn" class="flex-1 glass-btn-primary flex items-center justify-center space-x-2 py-3 rounded-xl font-bold text-sm">
                             <i class="fa-solid fa-wand-magic-sparkles"></i>
                             <span>一键 AI 智能拆解并关联</span>
@@ -1835,9 +1842,9 @@
                 </div>
 
                 <!-- Right Pane: AI Review Lists -->
-                <div class="w-7/12 p-6 overflow-y-auto space-y-4 flex flex-col bg-slate-100/50 relative" id="importReviewPane">
+                <div class="import-result-pane w-7/12 p-6 overflow-y-auto space-y-4 flex flex-col bg-slate-100/50 relative" id="importReviewPane">
                     <!-- Default state / Placeholder -->
-                    <div id="importPlaceholder" class="flex-1 flex flex-col items-center justify-center text-center space-y-3 p-12">
+                    <div id="importPlaceholder" class="import-result-placeholder flex-1 flex flex-col items-center justify-center text-center space-y-3 p-12">
                         <div class="h-16 w-16 bg-white border border-slate-200 rounded-2xl shadow-sm flex items-center justify-center text-brand-600 text-2xl">
                             <i class="fa-solid fa-robot animate-bounce"></i>
                         </div>
@@ -1927,7 +1934,7 @@
                 </div>
             </div>
         </div>
-    </div>
+    </section>
 
     <!-- Duplicate review before importing a single question or a parsed paper batch -->
     <div id="parsedDuplicateReviewModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="parsedDuplicateReviewTitle" aria-describedby="parsedDuplicateReviewDescription" class="fixed inset-0 z-[95] hidden items-center justify-center bg-slate-950/55 p-4 opacity-0 backdrop-blur-sm transition-opacity duration-200">

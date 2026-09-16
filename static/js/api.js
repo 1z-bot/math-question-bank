@@ -2097,10 +2097,10 @@
 
             const toggleSidebarBtn = document.getElementById('toggleSidebarBtn');
             if (toggleSidebarBtn) {
-                if (workspaceId === 'paper') {
-                    toggleSidebarBtn.classList.add('hidden');
-                } else {
+                if (workspaceId === 'bank') {
                     toggleSidebarBtn.classList.remove('hidden');
+                } else {
+                    toggleSidebarBtn.classList.add('hidden');
                 }
             }
 
@@ -2115,11 +2115,16 @@
                     checkPaper.classList.add('hidden');
                     if (btnBank) btnBank.classList.add('font-medium');
                     if (btnPaper) btnPaper.classList.remove('font-medium');
-                } else {
+                } else if (workspaceId === 'paper') {
                     checkBank.classList.add('hidden');
                     checkPaper.classList.remove('hidden');
                     if (btnBank) btnBank.classList.remove('font-medium');
                     if (btnPaper) btnPaper.classList.add('font-medium');
+                } else {
+                    checkBank.classList.add('hidden');
+                    checkPaper.classList.add('hidden');
+                    if (btnBank) btnBank.classList.remove('font-medium');
+                    if (btnPaper) btnPaper.classList.remove('font-medium');
                 }
             }
 

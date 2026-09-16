@@ -1358,26 +1358,9 @@
         }
 
         function openImportModal() {
-            const modal = document.getElementById('latexImportModal');
-            const activeNavigationItem = document.querySelector('[data-app-nav-target][aria-current="page"]');
-            if (activeNavigationItem && activeNavigationItem.dataset.appNavTarget !== 'import') {
-                modal.dataset.returnNavTarget = activeNavigationItem.dataset.appNavTarget;
+            if (typeof window.selectWorkspace === 'function') {
+                window.selectWorkspace('import', '导入中心');
             }
-            if (typeof window.setAppNavigationActive === 'function') {
-                window.setAppNavigationActive('import');
-            }
-            modal.classList.remove('hidden');
-            window.MathBankModal.open(modal, {
-                onEscape: () => {
-                    if (window.currentPdfTaskId) cancelCurrentImportTask();
-                    else closeImportModal();
-                }
-            });
-            setTimeout(() => {
-                modal.classList.remove('opacity-0');
-                modal.querySelector('div').classList.remove('scale-95');
-                modal.querySelector('div').classList.add('scale-100');
-            }, 50);
         }
 
         function closeImportModal() {
@@ -1387,20 +1370,15 @@
             if (typeof performOrphanedTempCropsCleanup === 'function') {
                 performOrphanedTempCropsCleanup();
             }
-            const modal = document.getElementById('latexImportModal');
-            const returnNavTarget = modal.dataset.returnNavTarget ||
-                (window.PaperStore && window.PaperStore.activeWorkspace) || 'bank';
-            if (typeof window.setAppNavigationActive === 'function') {
-                window.setAppNavigationActive(returnNavTarget);
+            const workspace = document.getElementById('importWorkspaceSection');
+            const returnNavTarget = workspace && workspace.dataset.returnNavTarget
+                ? workspace.dataset.returnNavTarget
+                : 'bank';
+            if (workspace) delete workspace.dataset.returnNavTarget;
+            if (typeof window.selectWorkspace === 'function') {
+                const workspaceName = returnNavTarget === 'paper' ? '智能组卷' : '题库管理';
+                window.selectWorkspace(returnNavTarget, workspaceName);
             }
-            delete modal.dataset.returnNavTarget;
-            window.MathBankModal.close(modal);
-            modal.classList.add('opacity-0');
-            modal.querySelector('div').classList.remove('scale-100');
-            modal.querySelector('div').classList.add('scale-95');
-            setTimeout(() => {
-                modal.classList.add('hidden');
-            }, 300);
         }
 
         // PDF & Crop Global States

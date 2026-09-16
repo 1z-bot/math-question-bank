@@ -278,11 +278,31 @@
         });
     }
 
+    // Import is authored after the app shell so its large markup stays isolated,
+    // then mounted beside the bank and paper sections as a peer workspace.
+    const mainWorkspaceContainer = document.querySelector('#appContentShell > main');
+    const importWorkspaceSection = document.getElementById('importWorkspaceSection');
+    const paperWorkspaceSection = document.getElementById('paperWorkspaceSection');
+    if (
+        mainWorkspaceContainer
+        && importWorkspaceSection
+        && paperWorkspaceSection
+        && importWorkspaceSection.parentElement !== mainWorkspaceContainer
+    ) {
+        mainWorkspaceContainer.insertBefore(importWorkspaceSection, paperWorkspaceSection);
+    }
+
     // Workspace View Switcher
     const originalSelectWorkspace = window.selectWorkspace;
     window.selectWorkspace = function (workspaceId, workspaceName) {
+        const previousWorkspace = window.PaperStore.activeWorkspace || 'bank';
         if (typeof originalSelectWorkspace === 'function') {
             originalSelectWorkspace(workspaceId, workspaceName);
+        }
+
+        const importSec = document.getElementById('importWorkspaceSection');
+        if (workspaceId === 'import' && previousWorkspace !== 'import' && importSec) {
+            importSec.dataset.returnNavTarget = previousWorkspace;
         }
 
         window.PaperStore.activeWorkspace = workspaceId;
@@ -297,15 +317,19 @@
         const paperSec = document.getElementById('paperWorkspaceSection');
         const toggleSidebarBtn = document.getElementById('toggleSidebarBtn');
 
+        if (bankSec) bankSec.classList.add('hidden');
+        if (paperSec) paperSec.classList.add('hidden');
+        if (importSec) importSec.classList.add('hidden');
+        if (toggleSidebarBtn) toggleSidebarBtn.classList.add('hidden');
+
         if (workspaceId === 'paper') {
-            if (bankSec) bankSec.classList.add('hidden');
-            if (toggleSidebarBtn) toggleSidebarBtn.classList.add('hidden');
             if (paperSec) {
                 paperSec.classList.remove('hidden');
                 window.renderPaperWorkspace();
             }
+        } else if (workspaceId === 'import') {
+            if (importSec) importSec.classList.remove('hidden');
         } else {
-            if (paperSec) paperSec.classList.add('hidden');
             if (toggleSidebarBtn) toggleSidebarBtn.classList.remove('hidden');
             if (bankSec) bankSec.classList.remove('hidden');
         }
@@ -4369,6 +4393,10 @@
             if (savedWorkspace === 'paper') {
                 if (typeof window.selectWorkspace === 'function') {
                     window.selectWorkspace('paper', '组卷排版工作台');
+                }
+            } else if (savedWorkspace === 'import') {
+                if (typeof window.selectWorkspace === 'function') {
+                    window.selectWorkspace('import', '导入中心');
                 }
             }
         } else {
