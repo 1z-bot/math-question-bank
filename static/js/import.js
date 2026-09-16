@@ -90,6 +90,9 @@
                 window.invalidatePendingQuestionDetailLoad();
             }
             EditorState.reset();
+            if (typeof window.setQuestionDetailEditAvailability === 'function') {
+                window.setQuestionDetailEditAvailability(false);
+            }
             document.getElementById('editorTitle').textContent = '录入新数学题';
             
             document.getElementById('editContent').value = '';
@@ -225,6 +228,9 @@
                 window.invalidatePendingQuestionDetailLoad();
             }
             EditorState.reset();
+            if (typeof window.setQuestionDetailEditAvailability === 'function') {
+                window.setQuestionDetailEditAvailability(false);
+            }
             document.getElementById('editorTitle').textContent = '录入新数学题';
 
             document.getElementById('editContent').value = '';
@@ -595,6 +601,9 @@
             const figureLayoutPendingAtRequest = typeof window.hasPendingFigureLayoutWrite === 'function'
                 && window.hasPendingFigureLayoutWrite(requestedQuestionId);
             questionDetailLoading = true;
+            if (typeof window.setQuestionDetailEditAvailability === 'function') {
+                window.setQuestionDetailEditAvailability(false);
+            }
             updateQuestionSaveButtonState();
 
             // Lazy-load details asynchronously
@@ -732,11 +741,17 @@
          
                     // Backup the original loaded question state directly from the DOM!
                     backupEditorState(fullItem.id, null);
+                    if (typeof window.setQuestionDetailEditAvailability === 'function') {
+                        window.setQuestionDetailEditAvailability(true);
+                    }
                 })
                 .catch(err => {
                     if (loadSequence !== questionDetailLoadSequence) return;
                     console.error('Failed to load full question details:', err);
                     showToast('获取题目详情失败: ' + err.message, 'error');
+                    if (typeof window.setQuestionDetailEditAvailability === 'function') {
+                        window.setQuestionDetailEditAvailability(false);
+                    }
                 })
                 .finally(() => {
                     if (loadSequence !== questionDetailLoadSequence) return;
@@ -1034,6 +1049,14 @@
                         }
                         if (editorSessionStillCurrent) {
                             refreshRelatedDropdown(relatedQuestionId, { expectedValue: relatedQuestionId });
+                            if (typeof window.setQuestionDetailEditAvailability === 'function') {
+                                window.setQuestionDetailEditAvailability(true);
+                            }
+                            const editorDialog = document.getElementById('editorSection');
+                            if (editorDialog) {
+                                delete editorDialog.dataset.newQuestionMode;
+                                delete editorDialog.dataset.returnQuestionId;
+                            }
                         }
                         return true;
                     } else {

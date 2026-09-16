@@ -1384,6 +1384,90 @@ def test_application_shell_navigation_reuses_existing_workspaces_and_import_moda
         assert marker in css_source
 
 
+def test_bank_browser_uses_detail_first_layout_and_card_based_editor_dialog():
+    elements = _index_elements()
+    index_source = _read(INDEX_PATH)
+    css_source = _read(CSS_PATH)
+    editor_source = _read(STATIC_JS_DIR / "editor.js")
+    import_source = _read(STATIC_JS_DIR / "import.js")
+
+    for element_id in (
+        "bankWorkspaceSection",
+        "sidebarSection",
+        "sidebarTopPanel",
+        "searchInput",
+        "filterType",
+        "filterDifficulty",
+        "filterCompulsory",
+        "filterChapter",
+        "filterSource",
+        "filterSort",
+        "questionsList",
+        "sidebarPagination",
+        "resizer-1",
+        "editorSection",
+        "saveQuestionBtn",
+        "questionContentPanel",
+        "answerExplanationPanel",
+        "resizer-2",
+        "previewSection",
+        "editQuestionFromPreviewBtn",
+        "questionResultSummary",
+    ):
+        assert element_id in elements
+
+    for marker in (
+        "bank-browser",
+        "bank-management-header",
+        "bank-management-actions",
+        "bank-filter-toolbar",
+        "bank-library-panel",
+        "bank-library-heading",
+        "bank-question-pane",
+        "bank-split-resizer",
+        "bank-list-toolbar",
+        "bank-sort-control",
+        "bank-question-list",
+        "bank-detail-panel",
+        "question-editor-dialog",
+        "question-editor-modal-surface",
+        "question-editor-steps",
+        'data-editor-panel="classification"',
+        'data-editor-panel="content"',
+        'data-editor-panel="answer"',
+    ):
+        assert marker in index_source
+
+    assert 'id="filterSource"' in index_source
+    assert '<option value="desc" selected>最近更新</option>' in index_source
+    assert 'onclick="openNewQuestionEditor()"' in index_source
+    assert 'onclick="openImportModal()"' in index_source
+    assert 'role="separator"' in index_source
+    assert 'aria-orientation="vertical"' in index_source
+    assert "openQuestionEditorModal('classification')" in index_source
+    assert index_source.index('class="bank-management-header"') < index_source.index('class="bank-filter-toolbar"')
+    assert index_source.index('class="bank-filter-toolbar"') < index_source.index('id="sidebarSection"')
+    assert "bank-question-card" in editor_source
+    assert "bank-question-excerpt" in editor_source
+    assert "bank-question-meta" in editor_source
+    assert "function switchQuestionEditorPanel(panelId)" in editor_source
+    assert "function openQuestionEditorModal(panelId = 'classification')" in editor_source
+    assert "function closeQuestionEditorModal()" in editor_source
+    assert "function openNewQuestionEditor()" in editor_source
+    assert "function setBankSplitRatio(value" in editor_source
+    assert "ratioFromPointer(event.clientX)" in editor_source
+    assert "window.setBankSplitRatio = setBankSplitRatio" in editor_source
+    assert "summary.textContent = `共 ${totalItems} 道题`" in editor_source
+    assert "shouldAutoSelectFirstQuestion" in editor_source
+    assert "setQuestionDetailEditAvailability(true)" in editor_source
+    assert "setQuestionDetailEditAvailability(true)" in import_source
+    assert "Bank browser and card-based editor dialog" in css_source
+    assert "--bank-list-track" in css_source
+    assert "#resizer-1.bank-split-resizer" in css_source
+    assert "#previewSection.bank-detail-panel" in css_source
+    assert "#editorSection.question-editor-dialog" in css_source
+
+
 def test_shared_tikz_workbench_is_multimodal_contextual_and_persistent():
     index_source = _read(INDEX_PATH)
     import_source = _read(STATIC_JS_DIR / "import.js")
