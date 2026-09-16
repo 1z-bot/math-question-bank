@@ -999,32 +999,72 @@
         </div>
         <!-- End of Bank Workspace Section -->
 
-        <!-- Workspace 2: Standalone 4-Part Paper Studio Workspace Section -->
-        <div id="paperWorkspaceSection" class="w-full h-full flex overflow-hidden hidden bg-slate-50 dark:bg-slate-950">
-            <!-- Left Side: Parts ② & ③ (60% width) -->
-            <div class="w-[60%] flex flex-col h-full border-r border-slate-200/80 dark:border-slate-800 shrink-0 bg-slate-50/50 dark:bg-slate-900/50">
-                <!-- Part ②: Collapsible Control Bar -->
-                <div id="paperFilterSection" class="p-2.5 sm:p-3 transition-all duration-300 shrink-0">
-                    <!-- Rendered by paper.js -->
-                </div>
+        <!-- Workspace 2: Smart paper studio -->
+        <div id="paperWorkspaceSection" class="paper-studio w-full h-full overflow-hidden hidden">
+            <div class="paper-studio-frame">
+                <header class="paper-studio-header">
+                    <div class="paper-studio-heading">
+                        <span class="paper-studio-heading-icon" aria-hidden="true"><i class="fa-solid fa-file-circle-plus"></i></span>
+                        <div>
+                            <h2>智能组卷</h2>
+                            <p>筛选题库、编排试题并实时检查 A4 卷面，原有保存与导出流程保持不变</p>
+                        </div>
+                    </div>
+                    <span class="paper-studio-mode-badge"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> 题库选题与实时排版</span>
+                </header>
 
-                <!-- Part ② & ③ Boundary Collapse Toggle Bar -->
-                <div class="px-3 py-1 bg-slate-100/40 dark:bg-slate-900/60 border-y border-slate-200/50 dark:border-slate-800/80 flex items-center justify-between shrink-0">
-                    <button onclick="togglePaperFilterBar()" id="togglePaperFilterBtn" class="text-[10px] font-semibold text-slate-500 hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-200 flex items-center space-x-1.5 transition-colors">
-                        <i id="paperFilterToggleIcon" class="fa-solid fa-chevron-up text-[10px]"></i>
-                        <span id="paperFilterToggleTxt">收起组卷配置栏</span>
-                    </button>
-                </div>
+                <div class="paper-studio-body">
+                    <!-- Left: configuration and question stream -->
+                    <section class="paper-library-column" aria-label="组卷配置与题目资源">
+                        <div class="paper-config-panel">
+                            <div class="paper-panel-heading">
+                                <div>
+                                    <strong><i class="fa-solid fa-sliders" aria-hidden="true"></i> 组卷配置</strong>
+                                    <small>设置卷面信息，并按教材、题型和难度筛选题目</small>
+                                </div>
+                                <button onclick="togglePaperFilterBar()" id="togglePaperFilterBtn" class="paper-panel-toggle">
+                                    <i id="paperFilterToggleIcon" class="fa-solid fa-chevron-up text-[10px]"></i>
+                                    <span id="paperFilterToggleTxt">收起组卷配置栏</span>
+                                </button>
+                            </div>
+                            <div id="paperFilterSection" class="paper-filter-content transition-all duration-300">
+                                <!-- Rendered by paper.js -->
+                            </div>
+                        </div>
 
-                <!-- Part ③: Full-Width Question Stream -->
-                <div id="paperQuestionStream" class="flex-1 p-4 overflow-y-auto custom-scrollbar">
-                    <!-- Rendered by paper.js -->
-                </div>
-            </div>
+                        <div class="paper-question-panel">
+                            <div class="paper-panel-heading paper-question-heading">
+                                <div>
+                                    <strong><i class="fa-solid fa-layer-group" aria-hidden="true"></i> 题目资源</strong>
+                                    <small>在全库题目与已选题目之间切换，逐题查看并调整卷面顺序</small>
+                                </div>
+                            </div>
+                            <div id="paperQuestionStream" class="flex-1 overflow-y-auto custom-scrollbar">
+                                <!-- Rendered by paper.js -->
+                            </div>
+                        </div>
+                    </section>
 
-            <!-- Right Side: Part ④ (40% width) -->
-            <div class="w-[40%] flex flex-col h-full bg-slate-100/60 dark:bg-slate-950 p-4 overflow-hidden shrink-0" id="paperCanvasSection">
-                <!-- Rendered by paper.js -->
+                    <div id="paperSplitResizer" class="paper-split-resizer" role="separator" tabindex="0"
+                         aria-label="调整题目资源和试卷预览的宽度"
+                         aria-orientation="vertical" aria-valuemin="36" aria-valuemax="66" aria-valuenow="58">
+                        <span class="paper-split-resizer-grip" aria-hidden="true"></span>
+                    </div>
+
+                    <!-- Right: live paper preview and existing management actions -->
+                    <aside class="paper-preview-column" aria-label="试卷预览与导出">
+                        <div class="paper-panel-heading paper-preview-heading">
+                            <div>
+                                <strong><i class="fa-solid fa-file-lines" aria-hidden="true"></i> 试卷预览</strong>
+                                <small>实时 A4 分页、卷面管理与导出</small>
+                            </div>
+                            <span class="paper-live-badge"><span aria-hidden="true"></span> 实时预览</span>
+                        </div>
+                        <div class="flex-1 flex flex-col overflow-hidden" id="paperCanvasSection">
+                            <!-- Rendered by paper.js -->
+                        </div>
+                    </aside>
+                </div>
             </div>
         </div>
         <!-- End of Paper Workspace Section -->
@@ -2018,7 +2058,7 @@
     <script src="/static/js/editor.js?v=1.0.1"></script>
     <script src="/static/js/ocr.js?v=1.0.1"></script>
     <script src="/static/js/import.js?v=1.0.1"></script>
-    <script src="/static/js/paper.js?v=1.0.1"></script>
+    <script src="/static/js/paper.js?v=1.0.3"></script>
 
     <!-- On-demand multimodal TikZ workbench -->
     <div id="answerTikzWorkbenchModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="answerTikzWorkbenchTitle" class="fixed inset-0 z-[80] hidden items-center justify-center bg-slate-950/65 p-2 opacity-0 backdrop-blur-sm transition-opacity duration-200 sm:p-4">

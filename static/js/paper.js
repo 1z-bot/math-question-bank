@@ -278,6 +278,86 @@
         });
     }
 
+    function initPaperSplitResizer() {
+        const workspaceBody = document.querySelector('.paper-studio-body');
+        const library = document.querySelector('.paper-library-column');
+        const preview = document.querySelector('.paper-preview-column');
+        const resizer = document.getElementById('paperSplitResizer');
+        if (!workspaceBody || !library || !preview || !resizer) return;
+
+        const minRatio = Number(resizer.getAttribute('aria-valuemin')) || 36;
+        const maxRatio = Number(resizer.getAttribute('aria-valuemax')) || 66;
+        const defaultRatio = 58;
+        let isDragging = false;
+
+        function setPaperSplitRatio(value, { notify = false } = {}) {
+            const ratio = Math.min(maxRatio, Math.max(minRatio, Number(value) || defaultRatio));
+            workspaceBody.style.setProperty('--paper-library-track', `${ratio}fr`);
+            workspaceBody.style.setProperty('--paper-preview-track', `${100 - ratio}fr`);
+            resizer.setAttribute('aria-valuenow', String(Math.round(ratio)));
+            if (notify) window.dispatchEvent(new Event('resize'));
+            return ratio;
+        }
+
+        function ratioFromPointer(clientX) {
+            const libraryRect = library.getBoundingClientRect();
+            const previewRect = preview.getBoundingClientRect();
+            const dividerWidth = resizer.getBoundingClientRect().width;
+            const availableWidth = Math.max(1, previewRect.right - libraryRect.left - dividerWidth);
+            const desiredLibraryWidth = clientX - libraryRect.left - dividerWidth / 2;
+            return desiredLibraryWidth / availableWidth * 100;
+        }
+
+        function finishDragging(event) {
+            if (!isDragging) return;
+            isDragging = false;
+            resizer.classList.remove('is-dragging');
+            document.body.style.cursor = '';
+            document.body.classList.remove('select-none');
+            if (event && resizer.hasPointerCapture && resizer.hasPointerCapture(event.pointerId)) {
+                resizer.releasePointerCapture(event.pointerId);
+            }
+            window.dispatchEvent(new Event('resize'));
+        }
+
+        resizer.addEventListener('pointerdown', event => {
+            if (window.matchMedia('(max-width: 960px)').matches) return;
+            event.preventDefault();
+            isDragging = true;
+            resizer.classList.add('is-dragging');
+            document.body.style.cursor = 'col-resize';
+            document.body.classList.add('select-none');
+            if (resizer.setPointerCapture) resizer.setPointerCapture(event.pointerId);
+            setPaperSplitRatio(ratioFromPointer(event.clientX));
+        });
+
+        resizer.addEventListener('pointermove', event => {
+            if (!isDragging) return;
+            event.preventDefault();
+            setPaperSplitRatio(ratioFromPointer(event.clientX));
+        });
+
+        resizer.addEventListener('pointerup', finishDragging);
+        resizer.addEventListener('pointercancel', finishDragging);
+
+        resizer.addEventListener('keydown', event => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key)) return;
+            event.preventDefault();
+            const currentRatio = Number(resizer.getAttribute('aria-valuenow')) || defaultRatio;
+            const nextRatio = event.key === 'Home'
+                ? defaultRatio
+                : currentRatio + (event.key === 'ArrowLeft' ? -2 : 2);
+            setPaperSplitRatio(nextRatio, { notify: true });
+        });
+
+        resizer.addEventListener('dblclick', () => {
+            setPaperSplitRatio(defaultRatio, { notify: true });
+        });
+
+        setPaperSplitRatio(defaultRatio);
+        window.setPaperSplitRatio = setPaperSplitRatio;
+    }
+
     // Import is authored after the app shell so its large markup stays isolated,
     // then mounted beside the bank and paper sections as a peer workspace.
     const mainWorkspaceContainer = document.querySelector('#appContentShell > main');
@@ -4377,6 +4457,7 @@
 
     // Init on DOMContentLoaded
     document.addEventListener('DOMContentLoaded', function () {
+        initPaperSplitResizer();
         loadStateFromStorage();
         updateCartBadges();
 

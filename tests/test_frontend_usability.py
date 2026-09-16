@@ -1455,6 +1455,58 @@ def test_import_center_reuses_existing_pipeline_in_a_dedicated_workspace():
     assert workspace["aria-labelledby"] == "importWorkspaceTitle"
 
 
+def test_smart_paper_studio_uses_clear_peer_panels_without_replacing_workflows():
+    elements = _index_elements()
+    index_source = _read(INDEX_PATH)
+    css_source = _read(CSS_PATH)
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+
+    for element_id in (
+        "paperWorkspaceSection",
+        "paperFilterSection",
+        "togglePaperFilterBtn",
+        "paperFilterToggleIcon",
+        "paperFilterToggleTxt",
+        "paperQuestionStream",
+        "paperSplitResizer",
+        "paperCanvasSection",
+    ):
+        assert element_id in elements
+
+    for marker in (
+        "paper-studio-frame",
+        "paper-studio-header",
+        "paper-studio-body",
+        "paper-library-column",
+        "paper-config-panel",
+        "paper-question-panel",
+        "paper-preview-column",
+        "paper-filter-content",
+        "paper-panel-heading",
+        "paper-live-badge",
+        "paper-split-resizer",
+        "paper-split-resizer-grip",
+    ):
+        assert marker in index_source
+        assert f".{marker}" in css_source
+
+    assert 'aria-label="组卷配置与题目资源"' in index_source
+    assert 'aria-label="试卷预览与导出"' in index_source
+    assert 'aria-label="调整题目资源和试卷预览的宽度"' in index_source
+    assert 'aria-orientation="vertical"' in index_source
+    assert "window.togglePaperFilterBar = function ()" in paper_source
+    assert "function initPaperSplitResizer()" in paper_source
+    assert "function setPaperSplitRatio(value" in paper_source
+    assert "ratioFromPointer(event.clientX)" in paper_source
+    assert "window.setPaperSplitRatio = setPaperSplitRatio" in paper_source
+    assert "function renderPart2FilterSection()" in paper_source
+    assert "function renderPart3QuestionStream()" in paper_source
+    assert "window.renderPaperCanvas = function ()" in paper_source
+    assert "savePaperToDb()" in paper_source
+    assert "exportPaperPdf('paper')" in paper_source
+    assert "exportPaperWord()" in paper_source
+
+
 def test_bank_browser_uses_detail_first_layout_and_card_based_editor_dialog():
     elements = _index_elements()
     index_source = _read(INDEX_PATH)
