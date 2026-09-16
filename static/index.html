@@ -76,7 +76,61 @@
 
     <link rel="stylesheet" href="/static/css/app.css">
 </head>
-<body class="h-screen overflow-hidden text-slate-800 font-sans antialiased flex flex-col">
+<body class="h-screen overflow-hidden text-slate-800 font-sans antialiased flex">
+
+    <!-- Persistent application navigation. Core actions continue to call the
+         existing workspace and modal functions; this is a UI shell only. -->
+    <aside id="appNavigation" class="app-navigation" aria-label="MathBank 主导航">
+        <div class="app-nav-brand">
+            <span class="app-nav-logo" aria-hidden="true">
+                <img src="/static/favicon.png" alt="">
+            </span>
+            <span class="app-nav-brand-copy">
+                <strong>MathBank</strong>
+                <small>本地教研工作台</small>
+            </span>
+        </div>
+
+        <div class="app-nav-section-label">工作区</div>
+        <nav id="appNavPrimary" class="app-nav-primary" aria-label="主要工作区">
+            <button type="button" id="appNavBank" class="app-nav-item" data-app-nav-target="bank" aria-current="page" onclick="selectWorkspace('bank', '题库管理')">
+                <i class="fa-solid fa-database" aria-hidden="true"></i>
+                <span>题库管理</span>
+            </button>
+            <button type="button" id="appNavImport" class="app-nav-item" data-app-nav-target="import" onclick="openImportModal()">
+                <i class="fa-solid fa-file-import" aria-hidden="true"></i>
+                <span>导入中心</span>
+            </button>
+            <button type="button" id="appNavPaper" class="app-nav-item" data-app-nav-target="paper" onclick="selectWorkspace('paper', '智能组卷')">
+                <i class="fa-solid fa-file-lines" aria-hidden="true"></i>
+                <span>智能组卷</span>
+                <span class="paper-cart-badge app-nav-badge hidden" aria-label="已选题目数">0</span>
+            </button>
+        </nav>
+
+        <div class="app-nav-spacer"></div>
+        <div class="app-nav-section-label app-nav-utility-label">工具</div>
+        <div class="app-nav-utilities">
+            <button type="button" class="app-nav-item app-nav-utility" onclick="openStatsModal()">
+                <i class="fa-solid fa-chart-pie" aria-hidden="true"></i>
+                <span>数据统计</span>
+            </button>
+            <button type="button" class="app-nav-item app-nav-utility" onclick="openSettingsModal()">
+                <i class="fa-solid fa-gear" aria-hidden="true"></i>
+                <span>系统设置</span>
+            </button>
+            <button type="button" class="app-nav-item app-nav-utility" onclick="toggleDarkMode()">
+                <i class="fa-solid fa-circle-half-stroke" aria-hidden="true"></i>
+                <span>明暗模式</span>
+            </button>
+            <button type="button" class="app-nav-item app-nav-utility app-nav-danger" onclick="confirmShutdown()">
+                <i class="fa-solid fa-power-off" aria-hidden="true"></i>
+                <span>关闭题库</span>
+            </button>
+        </div>
+    </aside>
+
+    <div id="appContentShell" class="app-content-shell">
 
     <!-- Header / Navbar - Apple Glass Style -->
     <header class="glass-panel sticky top-0 z-40 w-full h-16 flex items-center justify-between px-6">
@@ -112,7 +166,7 @@
             </button>
         </div>
 
-        <div class="flex items-center space-x-4">
+        <div id="headerUtilityActions" class="flex items-center space-x-4">
             <!-- Connection Status -->
             <div id="apiStatusIndicator" class="flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600">
                 <span class="h-2 w-2 rounded-full bg-slate-400"></span>
@@ -177,7 +231,7 @@
             </button>
 
             <!-- Settings Button - Apple Glass Style -->
-            <button onclick="openSettingsModal()" aria-label="打开系统设置" class="glass-btn relative flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-medium text-slate-600">
+            <button onclick="openSettingsModal()" id="settingsOpenBtn" aria-label="打开系统设置" class="glass-btn relative flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-medium text-slate-600">
                 <i class="fa-solid fa-gear"></i>
                 <span>设置</span>
                 <!-- Update Notification Badge (hidden by default) -->
@@ -188,7 +242,7 @@
             </button>
 
             <!-- Shutdown Button - Apple Glass Danger Style -->
-            <button onclick="confirmShutdown()" aria-label="安全关闭题库" class="glass-btn-danger flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-semibold" title="安全关闭本地题库后端服务">
+            <button onclick="confirmShutdown()" id="shutdownBtn" aria-label="安全关闭题库" class="glass-btn-danger flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-semibold" title="安全关闭本地题库后端服务">
                 <i class="fa-solid fa-power-off"></i>
                 <span>关闭题库</span>
             </button>
@@ -946,6 +1000,7 @@
         <!-- End of Paper Workspace Section -->
 
     </main>
+    </div>
 
     <!-- AI CLASSIFICATION MODAL - Apple Glass Style -->
     <div id="aiClassifyModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="aiClassifyModalTitle" class="fixed inset-0 glass-modal-overlay z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">

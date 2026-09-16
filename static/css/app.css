@@ -57,6 +57,237 @@ html.init-ws-paper #toggleSidebarBtn { display: none !important; }
     --apple-shadow-glow: 0 0 20px rgba(var(--brand-rgb), 0.15);
 }
 
+/* ===== Application shell and persistent navigation ===== */
+.app-navigation {
+    width: 224px;
+    height: 100vh;
+    height: 100dvh;
+    flex: 0 0 224px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 1.25rem 0.875rem 1rem;
+    background: rgba(255, 255, 255, 0.88);
+    border-right: 1px solid rgba(148, 163, 184, 0.18);
+    box-shadow: 8px 0 32px rgba(15, 23, 42, 0.04);
+    backdrop-filter: blur(24px) saturate(160%);
+    -webkit-backdrop-filter: blur(24px) saturate(160%);
+    position: relative;
+    z-index: 45;
+}
+
+.app-content-shell {
+    min-width: 0;
+    height: 100vh;
+    height: 100dvh;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.app-content-shell > main {
+    flex: 1 1 auto;
+}
+
+.app-nav-brand {
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0 0.625rem 1rem;
+    margin-bottom: 0.25rem;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.app-nav-logo {
+    width: 38px;
+    height: 38px;
+    flex: 0 0 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border-radius: 12px;
+    box-shadow: var(--apple-shadow-sm);
+}
+
+.app-nav-logo img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.app-nav-brand-copy {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    line-height: 1.2;
+}
+
+.app-nav-brand-copy strong {
+    color: var(--text-primary);
+    font-family: 'Outfit', 'Inter', sans-serif;
+    font-size: 1.08rem;
+    letter-spacing: -0.02em;
+}
+
+.app-nav-brand-copy small {
+    margin-top: 0.2rem;
+    color: var(--text-tertiary);
+    font-size: 0.66rem;
+    font-weight: 600;
+}
+
+.app-nav-section-label {
+    padding: 0.35rem 0.75rem 0.2rem;
+    color: var(--text-tertiary);
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+.app-nav-primary,
+.app-nav-utilities {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.app-nav-spacer {
+    flex: 1 1 auto;
+    min-height: 1rem;
+}
+
+.app-nav-item {
+    width: 100%;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.65rem 0.8rem;
+    position: relative;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    color: var(--text-secondary);
+    background: transparent;
+    font-size: 0.78rem;
+    font-weight: 650;
+    text-align: left;
+    transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.app-nav-item > i {
+    width: 1.1rem;
+    color: var(--text-tertiary);
+    font-size: 0.82rem;
+    text-align: center;
+    transition: color 160ms ease;
+}
+
+.app-nav-item:hover {
+    color: var(--text-primary);
+    background: rgba(148, 163, 184, 0.1);
+}
+
+.app-nav-item:active {
+    transform: scale(0.985);
+}
+
+.app-nav-item:focus-visible {
+    outline: 2px solid rgba(var(--brand-500-rgb), 0.55);
+    outline-offset: 2px;
+}
+
+.app-nav-item[aria-current="page"] {
+    color: rgb(var(--brand-700-rgb));
+    background: rgba(var(--brand-100-rgb), 0.78);
+    border-color: rgba(var(--brand-500-rgb), 0.18);
+    box-shadow: inset 3px 0 0 rgb(var(--brand-500-rgb));
+}
+
+.app-nav-item[aria-current="page"] > i {
+    color: rgb(var(--brand-600-rgb));
+}
+
+.app-nav-utility {
+    min-height: 40px;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+    font-size: 0.74rem;
+}
+
+.app-nav-danger:hover {
+    color: #dc2626;
+    background: rgba(254, 226, 226, 0.72);
+}
+
+.app-nav-danger:hover > i {
+    color: #ef4444;
+}
+
+.app-nav-badge {
+    min-width: 1.35rem;
+    height: 1.35rem;
+    margin-left: auto;
+    align-items: center;
+    justify-content: center;
+    padding: 0 0.35rem;
+    border-radius: 999px;
+    color: #ffffff;
+    background: rgb(var(--brand-600-rgb));
+    font-size: 0.62rem;
+    font-weight: 800;
+}
+
+.app-nav-badge:not(.hidden) {
+    display: inline-flex;
+}
+
+.dark .app-navigation {
+    background: rgba(11, 15, 25, 0.94);
+    border-right-color: rgba(255, 255, 255, 0.08);
+    box-shadow: 8px 0 32px rgba(0, 0, 0, 0.2);
+}
+
+.dark .app-nav-brand {
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+.dark .app-nav-item:hover {
+    color: #f8fafc;
+    background: rgba(255, 255, 255, 0.07);
+}
+
+.dark .app-nav-item[aria-current="page"] {
+    color: #ffffff;
+    background: rgba(var(--brand-500-rgb), 0.2);
+    border-color: rgba(var(--brand-500-rgb), 0.32);
+}
+
+html.init-ws-paper #appNavBank {
+    color: var(--text-secondary);
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+}
+
+html.init-ws-paper #appNavPaper {
+    color: rgb(var(--brand-700-rgb));
+    background: rgba(var(--brand-100-rgb), 0.78);
+    border-color: rgba(var(--brand-500-rgb), 0.18);
+    box-shadow: inset 3px 0 0 rgb(var(--brand-500-rgb));
+}
+
+@media (min-width: 769px) {
+    #appContentShell > header #appLogoMark,
+    #headerUtilityActions > #statsOpenBtn,
+    #headerUtilityActions > #shutdownBtn {
+        display: none !important;
+    }
+}
+
 /* Theme Classes definitions */
 .theme-obsidian {
     --brand-50-rgb: 248, 250, 252;
@@ -2041,6 +2272,92 @@ main {
     .answer-tikz-entry {
         min-width: 44px;
         min-height: 44px;
+    }
+}
+
+/* The persistent desktop rail becomes a compact bottom navigation on phones.
+   Utility actions remain in the existing header, so no feature is removed. */
+@media (max-width: 768px) {
+    body {
+        display: block !important;
+    }
+
+    .app-content-shell {
+        width: 100%;
+        height: 100vh;
+        height: 100dvh;
+        padding-bottom: 64px;
+        box-sizing: border-box;
+    }
+
+    .app-content-shell > main {
+        height: auto !important;
+        flex: 1 1 auto;
+    }
+
+    .app-navigation {
+        width: 100%;
+        height: 64px;
+        min-height: 64px;
+        padding: 0.35rem 0.5rem;
+        display: block;
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 45;
+        border-top: 1px solid rgba(148, 163, 184, 0.22);
+        border-right: 0;
+        box-shadow: 0 -8px 28px rgba(15, 23, 42, 0.08);
+    }
+
+    .app-nav-brand,
+    .app-nav-section-label,
+    .app-nav-spacer,
+    .app-nav-utilities {
+        display: none !important;
+    }
+
+    .app-nav-primary {
+        width: 100%;
+        height: 100%;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.35rem;
+    }
+
+    .app-nav-item {
+        min-width: 0;
+        min-height: 52px;
+        justify-content: center;
+        flex-direction: column;
+        gap: 0.18rem;
+        padding: 0.3rem 0.4rem;
+        border-radius: 11px;
+        font-size: 0.66rem;
+        line-height: 1;
+        text-align: center;
+    }
+
+    .app-nav-item > i {
+        width: auto;
+        font-size: 0.9rem;
+    }
+
+    .app-nav-item[aria-current="page"] {
+        box-shadow: inset 0 2px 0 rgb(var(--brand-500-rgb));
+    }
+
+    .app-nav-badge {
+        position: absolute;
+        top: 0.15rem;
+        left: calc(50% + 0.35rem);
+        margin-left: 0;
+    }
+
+    .dark .app-navigation {
+        border-top-color: rgba(255, 255, 255, 0.1);
+        box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.28);
     }
 }
 

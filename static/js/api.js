@@ -2077,7 +2077,19 @@
             closeWorkspaceDropdown();
         }
 
+        window.setAppNavigationActive = function(targetId) {
+            document.querySelectorAll('[data-app-nav-target]').forEach((button) => {
+                const isActive = button.dataset.appNavTarget === targetId;
+                if (isActive) {
+                    button.setAttribute('aria-current', 'page');
+                } else {
+                    button.removeAttribute('aria-current');
+                }
+            });
+        };
+
         window.selectWorkspace = function(workspaceId, workspaceName) {
+            window.setAppNavigationActive(workspaceId);
             const currentWorkspaceName = document.getElementById('currentWorkspaceName');
             if (currentWorkspaceName) {
                 currentWorkspaceName.textContent = workspaceName;

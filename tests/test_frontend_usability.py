@@ -1348,6 +1348,42 @@ def test_mobile_layout_touch_targets_and_dialog_panes_have_regression_guards():
     assert "sidebar-pagination-controls" in _read(STATIC_JS_DIR / "editor.js")
 
 
+def test_application_shell_navigation_reuses_existing_workspaces_and_import_modal():
+    elements = _index_elements()
+    index_source = _read(INDEX_PATH)
+    css_source = _read(CSS_PATH)
+    api_source = _read(STATIC_JS_DIR / "api.js")
+    import_source = _read(STATIC_JS_DIR / "import.js")
+
+    assert elements["appNavigation"]["aria-label"] == "MathBank 主导航"
+    assert elements["appNavPrimary"]["aria-label"] == "主要工作区"
+    assert elements["appNavBank"]["data-app-nav-target"] == "bank"
+    assert elements["appNavBank"]["aria-current"] == "page"
+    assert elements["appNavImport"]["data-app-nav-target"] == "import"
+    assert elements["appNavPaper"]["data-app-nav-target"] == "paper"
+
+    assert "selectWorkspace('bank', '题库管理')" in index_source
+    assert "openImportModal()" in index_source
+    assert "selectWorkspace('paper', '智能组卷')" in index_source
+    assert 'id="appContentShell"' in index_source
+
+    assert "window.setAppNavigationActive = function(targetId)" in api_source
+    assert "button.setAttribute('aria-current', 'page')" in api_source
+    assert "window.setAppNavigationActive(workspaceId)" in api_source
+    assert "modal.dataset.returnNavTarget" in import_source
+    assert "window.setAppNavigationActive('import')" in import_source
+    assert "window.setAppNavigationActive(returnNavTarget)" in import_source
+
+    for marker in (
+        ".app-navigation",
+        ".app-content-shell",
+        '.app-nav-item[aria-current="page"]',
+        "grid-template-columns: repeat(3, minmax(0, 1fr))",
+        "padding-bottom: 64px",
+    ):
+        assert marker in css_source
+
+
 def test_shared_tikz_workbench_is_multimodal_contextual_and_persistent():
     index_source = _read(INDEX_PATH)
     import_source = _read(STATIC_JS_DIR / "import.js")
