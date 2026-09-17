@@ -1346,10 +1346,11 @@ def test_mobile_layout_touch_targets_and_dialog_panes_have_regression_guards():
     assert "html.init-ws-paper #paperWorkspaceSection { display: flex !important; }" in css_source
     assert "#bankWorkspaceSection.bank-browser.hidden" in css_source
     assert "#importWorkspaceSection.hidden" in css_source
+    assert "#recordsWorkspaceSection.hidden" in css_source
     assert "sidebar-pagination-controls" in _read(STATIC_JS_DIR / "editor.js")
 
 
-def test_application_shell_navigation_reuses_three_peer_workspaces():
+def test_application_shell_navigation_reuses_four_peer_workspaces():
     elements = _index_elements()
     index_source = _read(INDEX_PATH)
     css_source = _read(CSS_PATH)
@@ -1363,10 +1364,12 @@ def test_application_shell_navigation_reuses_three_peer_workspaces():
     assert elements["appNavBank"]["aria-current"] == "page"
     assert elements["appNavImport"]["data-app-nav-target"] == "import"
     assert elements["appNavPaper"]["data-app-nav-target"] == "paper"
+    assert elements["appNavRecords"]["data-app-nav-target"] == "records"
 
     assert "selectWorkspace('bank', '题库管理')" in index_source
     assert "selectWorkspace('import', '导入中心')" in index_source
     assert "selectWorkspace('paper', '智能组卷')" in index_source
+    assert "openSavedPapersModal()" in index_source
     assert 'id="appContentShell"' in index_source
 
     assert "window.setAppNavigationActive = function(targetId)" in api_source
@@ -1378,15 +1381,58 @@ def test_application_shell_navigation_reuses_three_peer_workspaces():
     assert "mainWorkspaceContainer.insertBefore(importWorkspaceSection, paperWorkspaceSection)" in paper_source
     assert "workspaceId === 'import'" in paper_source
     assert "importSec.classList.remove('hidden')" in paper_source
+    assert "workspaceId === 'records'" in paper_source
+    assert "recordsSec.classList.remove('hidden')" in paper_source
 
     for marker in (
         ".app-navigation",
         ".app-content-shell",
         '.app-nav-item[aria-current="page"]',
-        "grid-template-columns: repeat(3, minmax(0, 1fr))",
+        "grid-template-columns: repeat(4, minmax(0, 1fr))",
         "padding-bottom: 64px",
     ):
         assert marker in css_source
+
+
+def test_saved_paper_records_reuses_existing_actions_in_a_dedicated_workspace():
+    elements = _index_elements()
+    index_source = _read(INDEX_PATH)
+    css_source = _read(CSS_PATH)
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+
+    for element_id in (
+        "recordsWorkspaceSection",
+        "recordsWorkspaceTitle",
+        "savedPaperTotalCount",
+        "recordsListTitle",
+        "savedPapersListContainer",
+    ):
+        assert element_id in elements
+
+    assert elements["recordsWorkspaceSection"]["aria-labelledby"] == "recordsWorkspaceTitle"
+    for marker in (
+        "records-workspace-shell",
+        "records-workspace-header",
+        "records-overview",
+        "records-list-panel",
+        "records-list-container",
+        "records-paper-grid",
+        "saved-paper-card",
+        "saved-paper-card-actions",
+    ):
+        assert marker in index_source or marker in paper_source
+        assert f".{marker}" in css_source
+
+    for marker in (
+        "async function renderSavedPapersWorkspace()",
+        "fetch('/api/papers')",
+        "loadSavedPaper(${paperId})",
+        "quickExportPaperPdf(${paperId})",
+        "deleteSavedPaper(${paperId})",
+        "window.selectWorkspace('records', '试卷记录')",
+        "window.selectWorkspace('paper', '智能组卷')",
+    ):
+        assert marker in paper_source
 
 
 def test_import_center_reuses_existing_pipeline_in_a_dedicated_workspace():

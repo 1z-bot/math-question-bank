@@ -381,6 +381,7 @@
         }
 
         const importSec = document.getElementById('importWorkspaceSection');
+        const recordsSec = document.getElementById('recordsWorkspaceSection');
         if (workspaceId === 'import' && previousWorkspace !== 'import' && importSec) {
             importSec.dataset.returnNavTarget = previousWorkspace;
         }
@@ -400,6 +401,7 @@
         if (bankSec) bankSec.classList.add('hidden');
         if (paperSec) paperSec.classList.add('hidden');
         if (importSec) importSec.classList.add('hidden');
+        if (recordsSec) recordsSec.classList.add('hidden');
         if (toggleSidebarBtn) toggleSidebarBtn.classList.add('hidden');
 
         if (workspaceId === 'paper') {
@@ -409,6 +411,8 @@
             }
         } else if (workspaceId === 'import') {
             if (importSec) importSec.classList.remove('hidden');
+        } else if (workspaceId === 'records') {
+            if (recordsSec) recordsSec.classList.remove('hidden');
         } else {
             if (toggleSidebarBtn) toggleSidebarBtn.classList.remove('hidden');
             if (bankSec) bankSec.classList.remove('hidden');
@@ -3415,15 +3419,120 @@
         }
     };
 
-    // ----------------- Saved Papers Archive Library Modal -----------------
+    // ----------------- Saved Papers Archive Library -----------------
+    async function renderSavedPapersWorkspace() {
+        const container = document.getElementById('savedPapersListContainer');
+        const countEl = document.getElementById('savedPaperTotalCount');
+        if (!container) return;
+
+        container.innerHTML = `
+            <div class="records-loading-state" role="status">
+                <i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
+                <span>正在获取历史试卷列表...</span>
+            </div>
+        `;
+
+        try {
+            const res = await fetch('/api/papers');
+            const data = await res.json();
+            if (data.status !== 'success' || !Array.isArray(data.data)) {
+                throw new Error(data.message || '无法读取历史试卷');
+            }
+
+            const papers = data.data;
+            if (countEl) countEl.textContent = String(papers.length);
+            if (papers.length === 0) {
+                container.innerHTML = `
+                    <div class="records-empty-state">
+                        <i class="fa-solid fa-box-open" aria-hidden="true"></i>
+                        <strong>暂无保存的历史试卷</strong>
+                        <span>在智能组卷工作区完成编排后，点击“保存试卷”即可归档到这里。</span>
+                    </div>
+                `;
+                return;
+            }
+
+            const paperTypeMap = {
+                exam_19: '19题高考卷',
+                exam: '常规试卷',
+                quiz: '日常小练',
+                handout: '讲义/教案'
+            };
+            container.innerHTML = `<div class="records-paper-grid">${papers.map((paper) => {
+                const paperId = Number.parseInt(paper.id, 10);
+                const typeLabel = paperTypeMap[paper.paper_type] || '试卷';
+                const dateText = paper.created_at
+                    ? new Date(paper.created_at).toLocaleString('zh-CN', {
+                        year: 'numeric', month: '2-digit', day: '2-digit',
+                        hour: '2-digit', minute: '2-digit'
+                    })
+                    : '未知时间';
+                const score = escapeHtml(String(paper.total_score ?? 0));
+                const questionCount = escapeHtml(String(paper.question_count ?? 0));
+                const title = escapeHtml(paper.title || '未命名试卷');
+                const subtitle = paper.subtitle
+                    ? `备注：${escapeHtml(paper.subtitle)}`
+                    : '暂无备注';
+
+                return `
+                    <article class="saved-paper-card">
+                        <div class="saved-paper-card-heading">
+                            <span class="saved-paper-type-badge">${escapeHtml(typeLabel)}</span>
+                            <h4 title="${title}">${title}</h4>
+                        </div>
+                        <div class="saved-paper-card-meta">
+                            <span><i class="fa-solid fa-calculator" aria-hidden="true"></i> ${score} 分</span>
+                            <span><i class="fa-solid fa-list-check" aria-hidden="true"></i> ${questionCount} 题</span>
+                            <span><i class="fa-regular fa-clock" aria-hidden="true"></i> ${escapeHtml(dateText)}</span>
+                        </div>
+                        <p class="saved-paper-card-note">${subtitle}</p>
+                        <div class="saved-paper-card-actions">
+                            <button type="button" class="saved-paper-load-action" onclick="loadSavedPaper(${paperId})" title="载入试卷至智能组卷工作区">
+                                <i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i><span>载入试卷</span>
+                            </button>
+                            <button type="button" class="saved-paper-pdf-action" onclick="quickExportPaperPdf(${paperId})" title="快速编译 PDF">
+                                <i class="fa-solid fa-file-pdf" aria-hidden="true"></i><span>导出 PDF</span>
+                            </button>
+                            <button type="button" class="saved-paper-delete-action" onclick="deleteSavedPaper(${paperId})" aria-label="删除试卷 ${title}" title="删除此保存试卷">
+                                <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
+                            </button>
+                        </div>
+                    </article>
+                `;
+            }).join('')}</div>`;
+        } catch (error) {
+            console.error(error);
+            if (countEl) countEl.textContent = '0';
+            container.innerHTML = `
+                <div class="records-error-state" role="alert">
+                    <i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i>
+                    <strong>历史试卷加载失败</strong>
+                    <span>${escapeHtml(error.message || '请稍后重试')}</span>
+                </div>
+            `;
+        }
+    }
+
     window.closeSavedPapersModal = function () {
         const modal = document.getElementById('savedPapersModal');
-        if (!modal) return;
+        if (!modal) {
+            if (window.PaperStore.activeWorkspace === 'records' && typeof window.selectWorkspace === 'function') {
+                window.selectWorkspace('paper', '智能组卷');
+            }
+            return;
+        }
         window.MathBankModal.close(modal);
         modal.remove();
     };
 
     window.openSavedPapersModal = async function () {
+        const recordsWorkspace = document.getElementById('recordsWorkspaceSection');
+        if (recordsWorkspace && typeof window.selectWorkspace === 'function') {
+            window.selectWorkspace('records', '试卷记录');
+            await renderSavedPapersWorkspace();
+            return;
+        }
+
         let modal = document.getElementById('savedPapersModal');
         if (modal) {
             window.MathBankModal.close(modal);
@@ -4479,6 +4588,8 @@
                 if (typeof window.selectWorkspace === 'function') {
                     window.selectWorkspace('import', '导入中心');
                 }
+            } else if (savedWorkspace === 'records') {
+                window.openSavedPapersModal();
             }
         } else {
             // Fresh server startup (.command / .bat re-launch) -> reset to bank studio default
