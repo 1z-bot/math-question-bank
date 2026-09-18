@@ -584,7 +584,8 @@
 
         // Select a question to Edit & Preview. The editor identity is committed
         // only after the requested detail payload has arrived successfully.
-        function selectQuestion(item) {
+        function selectQuestion(item, options = {}) {
+            const silent = options && options.silent === true;
             if (blockEditorSessionChangeWhileSaving()) {
                 return;
             }
@@ -737,7 +738,9 @@
                     document.getElementById('editorSection').scrollTop = 0;
                     
                     // Scroll to card active or highlight in current view
-                    showToast(`题目 #${fullItem.seq_num} 载入成功`);
+                    if (!silent) {
+                        showToast(`题目 #${fullItem.seq_num} 载入成功`);
+                    }
          
                     // Backup the original loaded question state directly from the DOM!
                     backupEditorState(fullItem.id, null);

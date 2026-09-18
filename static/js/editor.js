@@ -1591,7 +1591,10 @@ let bankQuestionsRetryTimer = null;
                     });
 
                     if (shouldAutoSelectFirstQuestion) {
-                        selectQuestion(questions[0]);
+                        // Initial list hydration is background work, not a
+                        // user selection; avoid showing a success toast on
+                        // every page refresh while keeping the first preview.
+                        selectQuestion(questions[0], { silent: true });
                     }
                     
                     renderSidebarPagination(totalItems, currentBankPage, 'bank');

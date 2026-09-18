@@ -1868,6 +1868,7 @@ def test_reduced_motion_dark_contrast_and_busy_feedback_are_explicit():
 
 def test_sidebar_uses_server_pagination_and_latest_request_wins():
     editor_source = _read(STATIC_JS_DIR / "editor.js")
+    import_source = _read(STATIC_JS_DIR / "import.js")
     load_start = editor_source.index("function loadQuestions(retryCount = 0)")
     load_end = editor_source.index("//       SIDEBAR PAGINATION SYSTEM HELPERS", load_start)
     load_source = editor_source[load_start:load_end]
@@ -1891,6 +1892,10 @@ def test_sidebar_uses_server_pagination_and_latest_request_wins():
 
     assert "questions.sort(" not in load_source
     assert "questions.slice(" not in load_source
+    assert "selectQuestion(questions[0], { silent: true })" in load_source
+    assert "function selectQuestion(item, options = {})" in import_source
+    assert "if (!silent)" in import_source
+    assert "showToast(`题目 #${fullItem.seq_num} 载入成功`)" in import_source
 
 
 def test_paper_bank_stream_uses_server_pagination_and_latest_request_wins():
