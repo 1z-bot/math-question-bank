@@ -1376,7 +1376,9 @@
                 : 'bank';
             if (workspace) delete workspace.dataset.returnNavTarget;
             if (typeof window.selectWorkspace === 'function') {
-                const workspaceName = returnNavTarget === 'paper' ? '智能组卷' : '题库管理';
+                const workspaceName = returnNavTarget === 'paper'
+                    ? '智能组卷'
+                    : (returnNavTarget === 'dashboard' ? '工作台' : '题库管理');
                 window.selectWorkspace(returnNavTarget, workspaceName);
             }
         }

@@ -1350,7 +1350,7 @@ def test_mobile_layout_touch_targets_and_dialog_panes_have_regression_guards():
     assert "sidebar-pagination-controls" in _read(STATIC_JS_DIR / "editor.js")
 
 
-def test_application_shell_navigation_reuses_four_peer_workspaces():
+def test_application_shell_navigation_reuses_peer_workspaces():
     elements = _index_elements()
     index_source = _read(INDEX_PATH)
     css_source = _read(CSS_PATH)
@@ -1360,12 +1360,14 @@ def test_application_shell_navigation_reuses_four_peer_workspaces():
 
     assert elements["appNavigation"]["aria-label"] == "MathBank 主导航"
     assert elements["appNavPrimary"]["aria-label"] == "主要工作区"
+    assert elements["appNavDashboard"]["data-app-nav-target"] == "dashboard"
+    assert elements["appNavDashboard"]["aria-current"] == "page"
     assert elements["appNavBank"]["data-app-nav-target"] == "bank"
-    assert elements["appNavBank"]["aria-current"] == "page"
     assert elements["appNavImport"]["data-app-nav-target"] == "import"
     assert elements["appNavPaper"]["data-app-nav-target"] == "paper"
     assert elements["appNavRecords"]["data-app-nav-target"] == "records"
 
+    assert "selectWorkspace('dashboard', '工作台')" in index_source
     assert "selectWorkspace('bank', '题库管理')" in index_source
     assert "selectWorkspace('import', '导入中心')" in index_source
     assert "selectWorkspace('paper', '智能组卷')" in index_source
@@ -1383,15 +1385,62 @@ def test_application_shell_navigation_reuses_four_peer_workspaces():
     assert "importSec.classList.remove('hidden')" in paper_source
     assert "workspaceId === 'records'" in paper_source
     assert "recordsSec.classList.remove('hidden')" in paper_source
+    assert "workspaceId === 'dashboard'" in paper_source
+    assert "dashboardSec.classList.remove('hidden')" in paper_source
 
     for marker in (
         ".app-navigation",
         ".app-content-shell",
         '.app-nav-item[aria-current="page"]',
-        "grid-template-columns: repeat(4, minmax(0, 1fr))",
+        "grid-template-columns: repeat(5, minmax(0, 1fr))",
         "padding-bottom: 64px",
     ):
         assert marker in css_source
+
+
+def test_dashboard_workspace_reuses_read_only_metrics_and_existing_workflows():
+    elements = _index_elements()
+    index_source = _read(INDEX_PATH)
+    css_source = _read(CSS_PATH)
+    dashboard_source = _read(STATIC_JS_DIR / "dashboard.js")
+    editor_source = _read(STATIC_JS_DIR / "editor.js")
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+
+    for element_id in (
+        "dashboardWorkspaceSection",
+        "dashboardTitle",
+        "dashboardQuestionTotal",
+        "dashboardReviewCount",
+        "dashboardPaperCount",
+        "dashboardMonthAdditions",
+        "dashboardTaskList",
+        "dashboardActivityList",
+    ):
+        assert element_id in elements
+
+    for marker in (
+        "fetch('/api/stats')",
+        "fetch('/api/papers')",
+        "window.loadDashboardData = loadDashboardData",
+        "selectWorkspace('import', '导入中心')",
+        "window.startManualQuestion = startManualQuestion",
+        "window.resumeSavedPaper = resumeSavedPaper",
+        "window.openNewQuestionEditor",
+        "window.loadSavedPaper",
+    ):
+        assert marker in dashboard_source or marker in index_source
+
+    assert 'id="appNavDashboard"' in index_source
+    assert 'onclick="startManualQuestion()"' in index_source
+    assert "onclick=\"resumeSavedPaper(" in dashboard_source
+    assert "html.init-ws-dashboard #dashboardWorkspaceSection" in css_source
+    assert ".dashboard-stat-grid" in css_source
+    assert ".dashboard-quick-actions" in css_source
+    assert ".dashboard-main-grid" in css_source
+    assert "align-items: stretch" in css_source
+    assert ".dashboard-task-panel" in css_source
+    assert "__preserveNewQuestionEditor" in editor_source
+    assert "classList.remove('init-ws-dashboard', 'init-ws-paper')" in paper_source
 
 
 def test_saved_paper_records_reuses_existing_actions_in_a_dedicated_workspace():

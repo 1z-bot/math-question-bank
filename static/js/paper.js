@@ -52,7 +52,7 @@
         expandedAnswerIds: new Set(),
         answerLoadingIds: new Set(),
         answerErrors: Object.create(null),
-        activeWorkspace: 'bank'
+        activeWorkspace: 'dashboard'
     };
 
     // Load State from LocalStorage
@@ -375,13 +375,18 @@
     // Workspace View Switcher
     const originalSelectWorkspace = window.selectWorkspace;
     window.selectWorkspace = function (workspaceId, workspaceName) {
-        const previousWorkspace = window.PaperStore.activeWorkspace || 'bank';
+        // The initial flash-prevention class keeps the first workspace visible
+        // during page boot.  Once the user makes an explicit workspace choice,
+        // remove it so its !important rules cannot mask the target workspace.
+        document.documentElement.classList.remove('init-ws-dashboard', 'init-ws-paper');
+        const previousWorkspace = window.PaperStore.activeWorkspace || 'dashboard';
         if (typeof originalSelectWorkspace === 'function') {
             originalSelectWorkspace(workspaceId, workspaceName);
         }
 
         const importSec = document.getElementById('importWorkspaceSection');
         const recordsSec = document.getElementById('recordsWorkspaceSection');
+        const dashboardSec = document.getElementById('dashboardWorkspaceSection');
         if (workspaceId === 'import' && previousWorkspace !== 'import' && importSec) {
             importSec.dataset.returnNavTarget = previousWorkspace;
         }
@@ -398,13 +403,21 @@
         const paperSec = document.getElementById('paperWorkspaceSection');
         const toggleSidebarBtn = document.getElementById('toggleSidebarBtn');
 
+        if (dashboardSec) dashboardSec.classList.add('hidden');
         if (bankSec) bankSec.classList.add('hidden');
         if (paperSec) paperSec.classList.add('hidden');
         if (importSec) importSec.classList.add('hidden');
         if (recordsSec) recordsSec.classList.add('hidden');
         if (toggleSidebarBtn) toggleSidebarBtn.classList.add('hidden');
 
-        if (workspaceId === 'paper') {
+        if (workspaceId === 'dashboard') {
+            if (dashboardSec) {
+                dashboardSec.classList.remove('hidden');
+                if (typeof window.loadDashboardData === 'function') {
+                    window.loadDashboardData();
+                }
+            }
+        } else if (workspaceId === 'paper') {
             if (paperSec) {
                 paperSec.classList.remove('hidden');
                 window.renderPaperWorkspace();
@@ -4575,14 +4588,18 @@
         // Restore active workspace if same server instance run (page refresh / tab re-open)
         const currentServerId = window.__serverInstanceId || '';
         let savedServerId = '';
-        let savedWorkspace = 'bank';
+        let savedWorkspace = 'dashboard';
         try {
             savedServerId = localStorage.getItem('mathbank_server_instance_id') || '';
-            savedWorkspace = localStorage.getItem('mathbank_active_workspace') || 'bank';
+            savedWorkspace = localStorage.getItem('mathbank_active_workspace') || 'dashboard';
         } catch (e) { }
 
         if (currentServerId && savedServerId === currentServerId) {
-            if (savedWorkspace === 'paper') {
+            if (savedWorkspace === 'dashboard') {
+                if (typeof window.selectWorkspace === 'function') {
+                    window.selectWorkspace('dashboard', '工作台');
+                }
+            } else if (savedWorkspace === 'paper') {
                 if (typeof window.selectWorkspace === 'function') {
                     window.selectWorkspace('paper', '组卷排版工作台');
                 }
@@ -4592,11 +4609,15 @@
                 }
             } else if (savedWorkspace === 'records') {
                 window.openSavedPapersModal();
+            } else if (savedWorkspace === 'bank') {
+                if (typeof window.selectWorkspace === 'function') {
+                    window.selectWorkspace('bank', '题库管理');
+                }
             }
         } else {
-            // Fresh server startup (.command / .bat re-launch) -> reset to bank studio default
+            // Fresh server startup (.command / .bat re-launch) -> reset to dashboard default
             try {
-                localStorage.setItem('mathbank_active_workspace', 'bank');
+                localStorage.setItem('mathbank_active_workspace', 'dashboard');
                 if (currentServerId) {
                     localStorage.setItem('mathbank_server_instance_id', currentServerId);
                 }

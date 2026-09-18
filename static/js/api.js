@@ -2104,25 +2104,40 @@
                 }
             }
 
+            const checkDashboard = document.getElementById('ws-check-dashboard');
             const checkBank = document.getElementById('ws-check-bank');
             const checkPaper = document.getElementById('ws-check-paper');
+            const btnDashboard = document.getElementById('ws-btn-dashboard');
             const btnBank = document.getElementById('ws-btn-bank');
             const btnPaper = document.getElementById('ws-btn-paper');
 
-            if (checkBank && checkPaper) {
-                if (workspaceId === 'bank') {
+            if (checkDashboard && checkBank && checkPaper) {
+                if (workspaceId === 'dashboard') {
+                    checkDashboard.classList.remove('hidden');
+                    checkBank.classList.add('hidden');
+                    checkPaper.classList.add('hidden');
+                    if (btnDashboard) btnDashboard.classList.add('font-medium');
+                    if (btnBank) btnBank.classList.remove('font-medium');
+                    if (btnPaper) btnPaper.classList.remove('font-medium');
+                } else if (workspaceId === 'bank') {
+                    checkDashboard.classList.add('hidden');
                     checkBank.classList.remove('hidden');
                     checkPaper.classList.add('hidden');
+                    if (btnDashboard) btnDashboard.classList.remove('font-medium');
                     if (btnBank) btnBank.classList.add('font-medium');
                     if (btnPaper) btnPaper.classList.remove('font-medium');
                 } else if (workspaceId === 'paper') {
+                    checkDashboard.classList.add('hidden');
                     checkBank.classList.add('hidden');
                     checkPaper.classList.remove('hidden');
+                    if (btnDashboard) btnDashboard.classList.remove('font-medium');
                     if (btnBank) btnBank.classList.remove('font-medium');
                     if (btnPaper) btnPaper.classList.add('font-medium');
                 } else {
+                    checkDashboard.classList.add('hidden');
                     checkBank.classList.add('hidden');
                     checkPaper.classList.add('hidden');
+                    if (btnDashboard) btnDashboard.classList.remove('font-medium');
                     if (btnBank) btnBank.classList.remove('font-medium');
                     if (btnPaper) btnPaper.classList.remove('font-medium');
                 }

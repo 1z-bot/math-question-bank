@@ -26,10 +26,12 @@
             try {
                 var curId = window.__serverInstanceId || '';
                 var savedId = localStorage.getItem('mathbank_server_instance_id') || '';
-                var savedWs = localStorage.getItem('mathbank_active_workspace') || 'bank';
+                var savedWs = localStorage.getItem('mathbank_active_workspace') || 'dashboard';
                 if (curId && savedId === curId && savedWs === 'paper') {
                     document.documentElement.classList.add('init-ws-paper');
                     window.__initWsIsPaper = true;
+                } else if (savedWs === 'dashboard' || !savedWs) {
+                    document.documentElement.classList.add('init-ws-dashboard');
                 }
             } catch(e) {}
         })();
@@ -93,7 +95,11 @@
 
         <div class="app-nav-section-label">工作区</div>
         <nav id="appNavPrimary" class="app-nav-primary" aria-label="主要工作区">
-            <button type="button" id="appNavBank" class="app-nav-item" data-app-nav-target="bank" aria-current="page" onclick="selectWorkspace('bank', '题库管理')">
+            <button type="button" id="appNavDashboard" class="app-nav-item" data-app-nav-target="dashboard" aria-current="page" onclick="selectWorkspace('dashboard', '工作台')">
+                <i class="fa-solid fa-house" aria-hidden="true"></i>
+                <span>工作台</span>
+            </button>
+            <button type="button" id="appNavBank" class="app-nav-item" data-app-nav-target="bank" onclick="selectWorkspace('bank', '题库管理')">
                 <i class="fa-solid fa-database" aria-hidden="true"></i>
                 <span>题库管理</span>
             </button>
@@ -147,12 +153,16 @@
                 <div onclick="toggleWorkspaceDropdown(event)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleWorkspaceDropdown(event)}" id="workspaceDropdownBtn" role="button" tabindex="0" aria-label="切换工作台" aria-haspopup="menu" aria-expanded="false" class="group cursor-pointer rounded-xl px-2 py-1 -mx-2 hover:bg-slate-200/50 dark:hover:bg-slate-800/60 active:scale-95 transition-all" title="点击切换工作台">
                     <span class="font-semibold text-lg tracking-tight font-['Outfit'] brand-title block">MathBank</span>
                     <div class="flex items-center space-x-1 -mt-1">
-                        <span id="currentWorkspaceName" class="text-sm font-medium text-slate-700 dark:text-slate-200">题库研讨工作台</span>
+                        <span id="currentWorkspaceName" class="text-sm font-medium text-slate-700 dark:text-slate-200">工作台</span>
                         <i class="fa-solid fa-chevron-down text-[9px] text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300 transition-transform duration-200" id="workspaceDropdownArrow"></i>
                     </div>
                 </div>
                 <!-- Workspace Dropdown Menu -->
                 <div id="workspaceDropdownMenu" role="menu" class="glass-dropdown absolute left-0 mt-2 w-52 py-1.5 rounded-2xl border border-slate-200/70 bg-white/95 backdrop-blur-xl shadow-xl transition-all duration-200 scale-90 opacity-0 pointer-events-none origin-top-left z-50">
+                    <button onclick="selectWorkspace('dashboard', '工作台')" class="glass-dropdown-item w-full px-3.5 py-2.5 text-xs text-left flex items-center justify-between font-medium rounded-xl" id="ws-btn-dashboard">
+                        <span>工作台</span>
+                        <i class="fa-solid fa-check text-[10px] text-brand-600 dark:text-brand-500" id="ws-check-dashboard"></i>
+                    </button>
                     <button onclick="selectWorkspace('bank', '题库研讨工作台')" class="glass-dropdown-item w-full px-3.5 py-2.5 text-xs text-left flex items-center justify-between font-medium rounded-xl" id="ws-btn-bank">
                         <span>题库研讨工作台</span>
                         <i class="fa-solid fa-check text-[10px] text-brand-600 dark:text-brand-500" id="ws-check-bank"></i>
@@ -165,7 +175,7 @@
             </div>
 
             <!-- 2. Sidebar Toggle Button (Placed right after Title) -->
-            <button onclick="toggleSidebarCollapse()" id="toggleSidebarBtn" aria-label="收起或展开左侧题库栏" class="ml-2 p-2 rounded-xl text-slate-500 hover:text-brand-600 hover:bg-slate-100/60 active:scale-95 transition-all focus:outline-none dark:text-slate-300 dark:hover:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/50" title="收起左侧题库栏">
+            <button onclick="toggleSidebarCollapse()" id="toggleSidebarBtn" aria-label="收起或展开左侧题库栏" class="hidden ml-2 p-2 rounded-xl text-slate-500 hover:text-brand-600 hover:bg-slate-100/60 active:scale-95 transition-all focus:outline-none dark:text-slate-300 dark:hover:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/50" title="收起左侧题库栏">
                 <i class="fa-solid fa-angles-left text-xs transition-transform duration-200" id="toggleSidebarIcon"></i>
             </button>
         </div>
@@ -255,9 +265,101 @@
 
     <!-- Main Content Container -->
     <main class="flex-1 flex overflow-hidden h-[calc(100vh-4rem)]">
+
+        <!-- Workspace 0: Teaching preparation dashboard -->
+        <section id="dashboardWorkspaceSection" class="dashboard-workspace w-full h-full overflow-hidden" aria-labelledby="dashboardTitle">
+            <div class="dashboard-shell custom-scrollbar">
+                <header class="dashboard-header">
+                    <div class="dashboard-heading">
+                        <span class="dashboard-heading-icon" aria-hidden="true"><i class="fa-solid fa-wand-magic-sparkles"></i></span>
+                        <div>
+                            <h1 id="dashboardTitle">下午好，继续完成今天的教学准备</h1>
+                            <p>从最近任务继续，或快速创建新的题目与试卷。</p>
+                        </div>
+                    </div>
+                    <button type="button" class="dashboard-primary-action" onclick="selectWorkspace('import', '导入中心')">
+                        <i class="fa-solid fa-plus" aria-hidden="true"></i><span>新建任务</span>
+                    </button>
+                </header>
+
+                <section class="dashboard-stat-grid" aria-label="题库概览">
+                    <article class="dashboard-stat-card dashboard-stat-card-primary">
+                        <span class="dashboard-stat-label">题库总量</span>
+                        <strong id="dashboardQuestionTotal">--</strong>
+                        <small id="dashboardQuestionTotalMeta">正在读取题库</small>
+                    </article>
+                    <article class="dashboard-stat-card dashboard-stat-card-warning">
+                        <span class="dashboard-stat-label">易错题待复核</span>
+                        <strong id="dashboardReviewCount">--</strong>
+                        <small id="dashboardReviewMeta">按题库统计更新</small>
+                    </article>
+                    <article class="dashboard-stat-card dashboard-stat-card-blue">
+                        <span class="dashboard-stat-label">已保存试卷</span>
+                        <strong id="dashboardPaperCount">--</strong>
+                        <small id="dashboardPaperMeta">可从试卷记录继续编排</small>
+                    </article>
+                    <article class="dashboard-stat-card dashboard-stat-card-success">
+                        <span class="dashboard-stat-label">本月新增</span>
+                        <strong id="dashboardMonthAdditions">--</strong>
+                        <small id="dashboardMonthMeta">正在读取本月数据</small>
+                    </article>
+                </section>
+
+                <div class="dashboard-main-grid">
+                    <section class="dashboard-task-panel" aria-labelledby="dashboardTasksTitle">
+                        <div class="dashboard-panel-heading">
+                            <div>
+                                <h2 id="dashboardTasksTitle">进行中的任务</h2>
+                                <p>从最近的工作继续，不会改变原有题库和组卷流程。</p>
+                            </div>
+                            <button type="button" class="dashboard-link-action" onclick="selectWorkspace('records', '试卷记录')">查看全部 <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></button>
+                        </div>
+                        <div id="dashboardTaskList" class="dashboard-task-list">
+                            <div class="ui-state ui-state-loading" role="status" aria-live="polite">
+                                <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-spinner fa-spin"></i></span>
+                                <strong class="ui-state-title">正在整理最近任务</strong>
+                                <span class="ui-state-description">题库和试卷记录加载完成后会显示在这里。</span>
+                            </div>
+                        </div>
+                    </section>
+
+                    <aside class="dashboard-side-column" aria-label="工作台快捷入口和最近动态">
+                        <section class="dashboard-quick-panel" aria-labelledby="dashboardQuickTitle">
+                            <div class="dashboard-panel-heading dashboard-panel-heading-light">
+                                <div>
+                                    <h2 id="dashboardQuickTitle">快速开始</h2>
+                                    <p>常用工作流直接进入下一步</p>
+                                </div>
+                            </div>
+                            <div class="dashboard-quick-actions">
+                                <button type="button" onclick="selectWorkspace('import', '导入中心')"><i class="fa-solid fa-file-import" aria-hidden="true"></i><span>导入 PDF 试卷</span></button>
+                                <button type="button" onclick="startManualQuestion()"><i class="fa-solid fa-plus" aria-hidden="true"></i><span>手动新建题目</span></button>
+                                <button type="button" onclick="selectWorkspace('paper', '智能组卷')"><i class="fa-solid fa-file-lines" aria-hidden="true"></i><span>创建试卷草稿</span></button>
+                            </div>
+                        </section>
+
+                        <section class="dashboard-activity-panel" aria-labelledby="dashboardActivityTitle">
+                            <div class="dashboard-panel-heading">
+                                <div>
+                                    <h2 id="dashboardActivityTitle">最近动态</h2>
+                                    <p>题库与试卷记录的最新变化</p>
+                                </div>
+                            </div>
+                            <div id="dashboardActivityList" class="dashboard-activity-list">
+                                <div class="ui-state ui-state-loading" role="status" aria-live="polite">
+                                    <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-spinner fa-spin"></i></span>
+                                    <span class="ui-state-description">正在读取最近动态</span>
+                                </div>
+                            </div>
+                        </section>
+                    </aside>
+                </div>
+            </div>
+        </section>
+        <!-- End of Teaching Preparation Dashboard -->
         
         <!-- Workspace 1: Bank management workspace -->
-        <div id="bankWorkspaceSection" class="bank-workspace bank-browser w-full h-full overflow-hidden">
+        <div id="bankWorkspaceSection" class="bank-workspace bank-browser w-full h-full overflow-hidden hidden">
             <header class="bank-management-header">
                 <div class="bank-library-heading">
                     <span class="bank-library-heading-icon" aria-hidden="true">
@@ -2111,10 +2213,11 @@
 
     <!-- MAIN APP JAVASCRIPT -->
     <script src="/static/js/api.js?v=1.0.1"></script>
-    <script src="/static/js/editor.js?v=1.0.2"></script>
+    <script src="/static/js/editor.js?v=1.0.3"></script>
     <script src="/static/js/ocr.js?v=1.0.1"></script>
-    <script src="/static/js/import.js?v=1.0.1"></script>
-    <script src="/static/js/paper.js?v=1.0.5"></script>
+    <script src="/static/js/import.js?v=1.0.2"></script>
+    <script src="/static/js/paper.js?v=1.0.7"></script>
+    <script src="/static/js/dashboard.js?v=1.0.2"></script>
 
     <!-- On-demand multimodal TikZ workbench -->
     <div id="answerTikzWorkbenchModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="answerTikzWorkbenchTitle" class="fixed inset-0 z-[80] hidden items-center justify-center bg-slate-950/65 p-2 opacity-0 backdrop-blur-sm transition-opacity duration-200 sm:p-4">

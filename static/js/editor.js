@@ -600,6 +600,10 @@ let bankQuestionsRetryTimer = null;
         function openNewQuestionEditor() {
             checkAndSwitch(() => {
                 const returnQuestionId = Number(EditorState.questionId || 0);
+                // The list refresh performed by startNewQuestion must not
+                // auto-select the first question again and overwrite the new
+                // question draft while its modal is opening.
+                window.__preserveNewQuestionEditor = true;
                 startNewQuestion();
                 const title = document.getElementById('editorTitle');
                 if (title) title.textContent = '录入新数学题';
@@ -1487,7 +1491,8 @@ let bankQuestionsRetryTimer = null;
 
                     currentBankPage = Math.min(responsePage, totalPages);
                     qListContainer.innerHTML = '';
-                    const shouldAutoSelectFirstQuestion = !EditorState.questionId &&
+                    const shouldAutoSelectFirstQuestion = !window.__preserveNewQuestionEditor &&
+                        !EditorState.questionId &&
                         questions.length > 0 && !isEditorModified();
                     
                     if (totalItems === 0) {
@@ -1619,6 +1624,9 @@ let bankQuestionsRetryTimer = null;
                 })
                 .finally(() => {
                     if (loadSequence !== bankQuestionsLoadSequence) return;
+                    if (window.__preserveNewQuestionEditor) {
+                        window.__preserveNewQuestionEditor = false;
+                    }
                     qListContainer.removeAttribute('aria-busy');
                     if (bankQuestionsLoadController === requestController) {
                         bankQuestionsLoadController = null;
