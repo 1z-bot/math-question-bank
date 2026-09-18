@@ -366,9 +366,10 @@
             <!-- Questions List Scroll -->
             <div class="bank-question-list flex-1 overflow-y-auto px-2 pb-6 space-y-2" id="questionsList">
                 <!-- Question Cards injection -->
-                <div class="p-6 text-center text-slate-400 text-sm">
-                    <i class="fa-solid fa-circle-notch animate-spin mb-2 text-brand-500"></i>
-                    <p>正在获取题库...</p>
+                <div class="ui-state ui-state-loading bank-list-state" role="status" aria-live="polite">
+                    <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-circle-notch fa-spin"></i></span>
+                    <strong class="ui-state-title">正在获取题库</strong>
+                    <span class="ui-state-description">题目列表加载完成后会自动显示在这里。</span>
                 </div>
             </div>
 
@@ -1113,9 +1114,10 @@
                         </div>
                     </div>
                     <div id="savedPapersListContainer" class="records-list-container custom-scrollbar">
-                        <div class="records-loading-state" role="status">
-                            <i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
-                            <span>正在获取历史试卷列表...</span>
+                        <div class="records-loading-state ui-state ui-state-loading" role="status" aria-live="polite">
+                            <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-spinner fa-spin"></i></span>
+                            <strong class="ui-state-title">正在获取历史试卷</strong>
+                            <span class="ui-state-description">已保存的试卷记录加载完成后会显示在这里。</span>
                         </div>
                     </div>
                 </section>
@@ -1938,25 +1940,25 @@
                 <!-- Right Pane: AI Review Lists -->
                 <div class="import-result-pane w-7/12 p-6 overflow-y-auto space-y-4 flex flex-col bg-slate-100/50 relative" id="importReviewPane">
                     <!-- Default state / Placeholder -->
-                    <div id="importPlaceholder" class="import-result-placeholder flex-1 flex flex-col items-center justify-center text-center space-y-3 p-12">
-                        <div class="h-16 w-16 bg-white border border-slate-200 rounded-2xl shadow-sm flex items-center justify-center text-brand-600 text-2xl">
+                    <div id="importPlaceholder" class="import-result-placeholder ui-state ui-state-empty flex-1 flex flex-col items-center justify-center text-center space-y-3 p-12">
+                        <div class="ui-state-icon h-16 w-16 bg-white border border-slate-200 rounded-2xl shadow-sm flex items-center justify-center text-brand-600 text-2xl">
                             <i class="fa-solid fa-robot animate-bounce"></i>
                         </div>
                         <div>
-                            <h4 class="font-bold text-slate-700 text-sm">等待拆解...</h4>
-                            <p class="text-xs text-slate-500 max-w-sm mt-1.5 leading-relaxed">
+                            <h4 class="ui-state-title font-bold text-slate-700 text-sm">等待拆解</h4>
+                            <p class="ui-state-description text-xs text-slate-500 max-w-sm mt-1.5 leading-relaxed">
                                 请在左侧输入试卷标题、拖入或粘贴 LaTeX 源码与配套插图文件，然后点击“一键 AI 智能拆解”按钮。AI 将为您智能分析分割题目并绑定插图！
                             </p>
                         </div>
                     </div>
 
                     <!-- Loading / Skeleton state -->
-                    <div id="importLoadingState" role="status" aria-live="polite" class="flex-1 flex flex-col items-center justify-center text-center space-y-4 hidden p-12">
-                        <div class="h-16 w-16 bg-white border border-brand-200/80 rounded-2xl shadow-sm flex items-center justify-center text-brand-600 text-2xl mb-1">
+                    <div id="importLoadingState" role="status" aria-live="polite" class="ui-state ui-state-loading flex-1 flex flex-col items-center justify-center text-center space-y-4 hidden p-12">
+                        <div class="ui-state-icon h-16 w-16 bg-white border border-brand-200/80 rounded-2xl shadow-sm flex items-center justify-center text-brand-600 text-2xl mb-1">
                             <i class="fa-solid fa-circle-notch fa-spin text-brand-600 text-3xl inline-block"></i>
                         </div>
                         <div class="space-y-1.5 w-full max-w-xs flex flex-col items-center">
-                            <h4 class="font-bold text-slate-700 text-sm" id="importLoadingText">正在整理插图映射并预备上传...</h4>
+                            <h4 class="ui-state-title font-bold text-slate-700 text-sm" id="importLoadingText">正在整理插图映射并预备上传...</h4>
                             <!-- Progress bar -->
                             <div class="w-full bg-slate-200 rounded-full h-1.5 mt-2 hidden" id="importProgressBarContainer">
                                 <div class="bg-brand-600 h-1.5 rounded-full transition-all duration-300" style="width: 0%" id="importProgressBar"></div>
@@ -2109,10 +2111,10 @@
 
     <!-- MAIN APP JAVASCRIPT -->
     <script src="/static/js/api.js?v=1.0.1"></script>
-    <script src="/static/js/editor.js?v=1.0.1"></script>
+    <script src="/static/js/editor.js?v=1.0.2"></script>
     <script src="/static/js/ocr.js?v=1.0.1"></script>
     <script src="/static/js/import.js?v=1.0.1"></script>
-    <script src="/static/js/paper.js?v=1.0.4"></script>
+    <script src="/static/js/paper.js?v=1.0.5"></script>
 
     <!-- On-demand multimodal TikZ workbench -->
     <div id="answerTikzWorkbenchModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="answerTikzWorkbenchTitle" class="fixed inset-0 z-[80] hidden items-center justify-center bg-slate-950/65 p-2 opacity-0 backdrop-blur-sm transition-opacity duration-200 sm:p-4">

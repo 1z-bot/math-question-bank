@@ -40,6 +40,17 @@ html.init-ws-paper #toggleSidebarBtn { display: none !important; }
     --apple-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04);
     --apple-shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.12), 0 4px 12px rgba(0, 0, 0, 0.06);
 
+    /* Shared workspace rhythm and feedback surfaces */
+    --workspace-padding: 1rem;
+    --workspace-gap: 0.75rem;
+    --workspace-radius: 1rem;
+    --workspace-card-radius: 0.875rem;
+    --workspace-border: rgba(148, 163, 184, 0.18);
+    --workspace-surface: rgba(255, 255, 255, 0.94);
+    --workspace-surface-muted: #f8f9fc;
+    --workspace-canvas: #f5f7fb;
+    --control-transition: 160ms cubic-bezier(0.4, 0, 0.2, 1);
+
     /* Text hierarchy */
     --text-primary: #1E293B;
     --text-secondary: #64748B;
@@ -3251,7 +3262,7 @@ body.question-editor-open {
     }
 }
 
-@media (max-width: 960px) and (min-width: 769px) {
+@media (max-width: 1100px) and (min-width: 769px) {
     #bankWorkspaceSection.bank-browser {
         display: flex;
         flex-direction: column;
@@ -3811,7 +3822,7 @@ body.question-editor-open {
 
 }
 
-@media (max-width: 960px) {
+@media (max-width: 1100px) {
     .paper-studio-body {
         display: flex;
         flex-direction: column;
@@ -4629,5 +4640,272 @@ body.question-editor-open {
         bottom: 0;
         margin: 0 -0.75rem -0.75rem;
         padding: 0.7rem 0.75rem !important;
+    }
+}
+
+/* ===== Final UI polish: shared rhythm, states, themes and responsive parity ===== */
+
+/* Keep every peer workspace on the same outer grid without changing its content flow. */
+#bankWorkspaceSection.bank-browser,
+#paperWorkspaceSection.paper-studio,
+.records-workspace,
+.import-workspace-section {
+    padding: var(--workspace-padding);
+    background: var(--workspace-canvas);
+}
+
+.paper-studio-frame,
+.paper-library-column,
+.records-workspace-shell {
+    gap: var(--workspace-gap);
+}
+
+#sidebarSection.bank-library-panel,
+#previewSection.bank-detail-panel,
+.paper-config-panel,
+.paper-question-panel,
+.paper-preview-column,
+.records-list-panel,
+.import-workspace-shell,
+#importInputPane.import-source-pane,
+#importReviewPane.import-result-pane {
+    border-color: var(--workspace-border);
+    border-radius: var(--workspace-radius);
+}
+
+.bank-filter-toolbar,
+.question-card.bank-question-card,
+.records-overview-card,
+.saved-paper-card,
+.import-config-card,
+.import-workspace-steps li {
+    border-radius: var(--workspace-card-radius);
+}
+
+/* Button interaction states share one motion curve and never animate disabled controls. */
+.glass-btn,
+.glass-btn-primary,
+.glass-btn-danger,
+.glass-btn-success,
+.records-primary-action,
+.records-secondary-action,
+.saved-paper-card-actions button,
+.paper-panel-toggle {
+    transition:
+        background-color var(--control-transition),
+        border-color var(--control-transition),
+        color var(--control-transition),
+        box-shadow var(--control-transition),
+        transform var(--control-transition);
+}
+
+:is(.glass-btn, .glass-btn-primary, .glass-btn-danger, .glass-btn-success,
+    .records-primary-action, .records-secondary-action, .saved-paper-card-actions button,
+    .paper-panel-toggle):focus-visible {
+    outline: 2px solid rgb(var(--brand-500-rgb));
+    outline-offset: 2px;
+}
+
+button[aria-busy="true"] {
+    opacity: 0.82;
+    cursor: progress;
+}
+
+button:disabled:hover,
+button[aria-disabled="true"]:hover,
+[role="button"][aria-disabled="true"]:hover {
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+/* Reusable loading, empty and error feedback for every workspace. */
+.ui-state {
+    width: 100%;
+    min-height: 180px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 2rem 1.25rem;
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+.ui-state.hidden {
+    display: none !important;
+}
+
+.ui-state > i,
+.ui-state-icon {
+    display: inline-flex;
+    width: 2.75rem;
+    height: 2.75rem;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(var(--brand-200-rgb), 0.72);
+    border-radius: 0.9rem;
+    background: rgba(var(--brand-50-rgb), 0.88);
+    color: rgb(var(--brand-600-rgb));
+    font-size: 1.15rem !important;
+}
+
+.ui-state-title,
+.ui-state > strong {
+    color: var(--text-primary);
+    font-size: 0.82rem;
+    font-weight: 800;
+}
+
+.ui-state-description,
+.ui-state > span:not(.ui-state-icon) {
+    max-width: 28rem;
+    color: var(--text-tertiary);
+    font-size: 0.68rem;
+    line-height: 1.55;
+}
+
+.ui-state-error > i,
+.ui-state-error .ui-state-icon {
+    border-color: rgba(244, 63, 94, 0.24);
+    background: rgba(255, 241, 242, 0.92);
+    color: #e11d48;
+}
+
+.ui-state-action {
+    min-height: 36px;
+    margin-top: 0.25rem;
+    padding: 0.5rem 0.85rem;
+    border: 1px solid rgba(244, 63, 94, 0.24);
+    border-radius: 0.7rem;
+    background: #fff;
+    color: #be123c;
+    font-size: 0.68rem;
+    font-weight: 750;
+}
+
+.bank-list-state {
+    min-height: 220px;
+}
+
+.import-result-placeholder.ui-state {
+    min-height: 360px;
+}
+
+/* Explicit dark surfaces cover generated utility classes that are unavailable offline. */
+.dark {
+    --workspace-border: rgba(255, 255, 255, 0.09);
+    --workspace-surface: rgba(15, 23, 42, 0.95);
+    --workspace-surface-muted: #0b111d;
+    --workspace-canvas: #080d17;
+}
+
+.dark .ui-state {
+    color: #94a3b8;
+}
+
+.dark .ui-state > i,
+.dark .ui-state-icon {
+    border-color: rgba(var(--brand-500-rgb), 0.28);
+    background: rgba(var(--brand-500-rgb), 0.14);
+    color: rgb(var(--brand-200-rgb));
+}
+
+.dark .ui-state-title,
+.dark .ui-state > strong {
+    color: #e2e8f0;
+}
+
+.dark .ui-state-error > i,
+.dark .ui-state-error .ui-state-icon {
+    border-color: rgba(251, 113, 133, 0.28);
+    background: rgba(136, 19, 55, 0.22);
+    color: #fda4af;
+}
+
+.dark .ui-state-action {
+    border-color: rgba(251, 113, 133, 0.28);
+    background: rgba(30, 41, 59, 0.9);
+    color: #fda4af;
+}
+
+.dark #paperQuestionStream > .space-y-4 > div[class*="rounded-2xl"] {
+    border-color: rgba(71, 85, 105, 0.78) !important;
+    background: rgba(30, 41, 59, 0.82) !important;
+    color: #e2e8f0;
+}
+
+.dark #paperQuestionStream > .space-y-4 > div[class*="rounded-2xl"]:hover {
+    border-color: rgba(var(--brand-500-rgb), 0.48) !important;
+    background: rgba(35, 47, 68, 0.94) !important;
+}
+
+.dark .records-primary-action {
+    border-color: rgb(var(--brand-500-rgb));
+    background: rgb(var(--brand-600-rgb));
+    color: #fff;
+}
+
+.dark .records-secondary-action {
+    color: #cbd5e1;
+}
+
+.dark .records-workspace-heading p,
+.dark .records-list-heading p,
+.dark .records-overview-card small,
+.dark .saved-paper-card-meta,
+.dark .saved-paper-card-note {
+    color: #94a3b8;
+}
+
+.dark .records-overview-icon {
+    background: rgba(51, 65, 85, 0.82);
+    color: #cbd5e1;
+}
+
+.dark .saved-paper-type-badge {
+    background: rgba(var(--brand-500-rgb), 0.18);
+    color: rgb(var(--brand-200-rgb));
+}
+
+.dark .saved-paper-pdf-action {
+    background: rgba(6, 95, 70, 0.28);
+    color: #6ee7b7;
+}
+
+.dark .saved-paper-delete-action {
+    background: rgba(136, 19, 55, 0.26);
+    color: #fda4af;
+}
+
+.dark .import-workspace-heading h3,
+.dark .import-config-card label,
+.dark .import-ai-option label,
+.dark #importPlaceholder h4,
+.dark #importLoadingState h4 {
+    color: #e2e8f0 !important;
+}
+
+@media (max-width: 1100px) {
+    :root {
+        --workspace-padding: 0.7rem;
+        --workspace-gap: 0.6rem;
+    }
+}
+
+@media (max-width: 768px) {
+    :root {
+        --workspace-padding: 0.5rem;
+        --workspace-gap: 0.5rem;
+    }
+
+    .ui-state {
+        min-height: 160px;
+        padding: 1.5rem 0.9rem;
+    }
+
+    #importInputPane.import-source-pane,
+    #importReviewPane.import-result-pane {
+        min-height: min(520px, calc(100dvh - 180px));
     }
 }

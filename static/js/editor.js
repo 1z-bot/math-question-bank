@@ -932,9 +932,10 @@ let bankQuestionsRetryTimer = null;
             
             if (totalItems === 0) {
                 qListContainer.innerHTML = `
-                    <div class="p-6 text-center text-slate-400 text-xs">
-                        <i class="fa-solid fa-box-open text-2xl mb-1 text-slate-400"></i>
-                        <p>草稿箱空空如也</p>
+                    <div class="ui-state ui-state-empty bank-list-state">
+                        <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-box-open"></i></span>
+                        <strong class="ui-state-title">草稿箱空空如也</strong>
+                        <span class="ui-state-description">编辑题目时保存的草稿会显示在这里。</span>
                     </div>`;
                 renderSidebarPagination(0, 1, 'drafts');
                 return;
@@ -1491,9 +1492,10 @@ let bankQuestionsRetryTimer = null;
                     
                     if (totalItems === 0) {
                         qListContainer.innerHTML = `
-                            <div class="p-6 text-center text-slate-400 text-xs">
-                                <i class="fa-solid fa-box-open text-2xl mb-1 text-slate-400"></i>
-                                <p>未找到匹配题目</p>
+                            <div class="ui-state ui-state-empty bank-list-state">
+                                <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-box-open"></i></span>
+                                <strong class="ui-state-title">未找到匹配题目</strong>
+                                <span class="ui-state-description">请调整搜索词或筛选条件后重试。</span>
                             </div>`;
                         renderSidebarPagination(0, 1, 'bank');
                         return;
@@ -1603,11 +1605,11 @@ let bankQuestionsRetryTimer = null;
                         }, 1500);
                     } else {
                         qListContainer.innerHTML = `
-                            <div class="p-6 text-center text-red-500 text-xs">
-                                <i class="fa-solid fa-triangle-exclamation text-2xl mb-1 text-red-400"></i>
-                                <p class="font-semibold">获取题库列表失败</p>
-                                <p class="text-[10px] text-slate-500 mt-0.5 mb-2.5">后台服务正在启动或连接超时</p>
-                                <button onclick="loadQuestions()" class="px-3.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 font-bold rounded-xl transition-all border border-red-200 hover:scale-95 text-[10px] inline-flex items-center space-x-1 cursor-pointer">
+                            <div class="ui-state ui-state-error bank-list-state" role="alert">
+                                <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-triangle-exclamation"></i></span>
+                                <strong class="ui-state-title">获取题库列表失败</strong>
+                                <span class="ui-state-description">后台服务正在启动或连接超时</span>
+                                <button onclick="loadQuestions()" class="ui-state-action inline-flex items-center space-x-1 cursor-pointer">
                                     <i class="fa-solid fa-arrows-rotate"></i><span>重新加载</span>
                                 </button>
                             </div>`;

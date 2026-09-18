@@ -1747,6 +1747,39 @@ def test_paper_question_answers_are_collapsible_and_loaded_on_demand():
         assert marker in paper_source
 
 
+def test_final_ui_polish_shares_rhythm_feedback_and_dark_surfaces():
+    css_source = _read(CSS_PATH)
+    index_source = _read(INDEX_PATH)
+    editor_source = _read(STATIC_JS_DIR / "editor.js")
+    paper_source = _read(STATIC_JS_DIR / "paper.js")
+    rendered_sources = "\n".join((index_source, editor_source, paper_source))
+
+    for token in (
+        "--workspace-padding",
+        "--workspace-gap",
+        "--workspace-radius",
+        "--workspace-card-radius",
+        "--workspace-border",
+        "--control-transition",
+    ):
+        assert token in css_source
+
+    for state_class in ("ui-state-loading", "ui-state-empty", "ui-state-error"):
+        assert state_class in rendered_sources
+
+    for state_class in ("ui-state-icon", "ui-state-title", "ui-state-description"):
+        assert state_class in rendered_sources
+        assert f".{state_class}" in css_source
+
+    assert ".ui-state.hidden" in css_source
+    assert ".dark #paperQuestionStream > .space-y-4" in css_source
+    assert ".dark .records-primary-action" in css_source
+    assert ".dark .saved-paper-pdf-action" in css_source
+    assert ".dark .import-workspace-heading h3" in css_source
+    assert "min-height: min(520px, calc(100dvh - 180px))" in css_source
+    assert 'role="status" aria-live="polite"' in index_source
+
+
 def test_reduced_motion_dark_contrast_and_busy_feedback_are_explicit():
     css_source = _read(CSS_PATH)
     index_source = _read(INDEX_PATH)

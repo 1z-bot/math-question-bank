@@ -1394,9 +1394,10 @@
 
         if (currentTab === 'all' && pagination.all.loading) {
             html += `
-                <div class="flex min-h-[220px] flex-col items-center justify-center rounded-2xl border border-slate-200/80 bg-white/60 text-slate-500 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-300" role="status" aria-live="polite">
-                    <i class="fa-solid fa-spinner fa-spin mb-3 text-xl text-brand-500"></i>
-                    <p class="text-sm font-semibold">正在加载题库第 ${pagination.all.retryPage || 1} 页...</p>
+                <div class="ui-state ui-state-loading min-h-[220px] rounded-2xl border border-slate-200/80 bg-white/60 dark:border-slate-700 dark:bg-slate-800/50" role="status" aria-live="polite">
+                    <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-spinner fa-spin"></i></span>
+                    <strong class="ui-state-title">正在加载题库第 ${pagination.all.retryPage || 1} 页</strong>
+                    <span class="ui-state-description">正在读取当前筛选条件下的题目资源。</span>
                 </div>
             `;
             container.innerHTML = html;
@@ -1405,13 +1406,13 @@
 
         if (currentTab === 'all' && pagination.all.error) {
             html += `
-                <div class="flex min-h-[220px] flex-col items-center justify-center rounded-2xl border border-rose-200 bg-rose-50/60 px-5 text-center dark:border-rose-900/60 dark:bg-rose-950/30" role="alert">
-                    <i class="fa-solid fa-circle-exclamation mb-3 text-xl text-rose-500"></i>
-                    <p class="text-sm font-semibold text-rose-700 dark:text-rose-300">${escapeHtml(pagination.all.error)}</p>
-                    <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">${Number.isInteger(pagination.all.total)
+                <div class="ui-state ui-state-error min-h-[220px] rounded-2xl border border-rose-200 bg-rose-50/60 px-5 dark:border-rose-900/60 dark:bg-rose-950/30" role="alert">
+                    <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-circle-exclamation"></i></span>
+                    <strong class="ui-state-title">${escapeHtml(pagination.all.error)}</strong>
+                    <span class="ui-state-description">${Number.isInteger(pagination.all.total)
                         ? `上次成功加载时共 ${pagination.all.total} 题，本次请求尚未完成。`
-                        : '当前筛选结果总数尚未确认。'}</p>
-                    <button type="button" onclick="window.retryPaperBankQuestions()" class="mt-4 rounded-lg border border-rose-200 bg-white px-4 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-100 dark:border-rose-800 dark:bg-slate-800 dark:text-rose-300 dark:hover:bg-slate-700">重新加载</button>
+                        : '当前筛选结果总数尚未确认。'}</span>
+                    <button type="button" onclick="window.retryPaperBankQuestions()" class="ui-state-action">重新加载</button>
                 </div>
             `;
             container.innerHTML = html;
@@ -1446,12 +1447,12 @@
                 ? (cart.length > 0 ? '请重新加载已选题目后再预览或导出试卷。' : '从“全库试题”中加入题目后，会在这里按卷面顺序显示。')
                 : '请在上方调节学段、章节、题型、难度或搜索条件。';
             html += `
-                <div class="flex flex-col items-center justify-center py-20 bg-white/50 backdrop-blur-md rounded-2xl border border-dashed border-slate-300 dark:bg-slate-800/40 dark:border-slate-700">
-                    <div class="w-12 h-12 rounded-2xl bg-brand-50 text-brand-500 flex items-center justify-center text-xl mb-3 dark:bg-slate-800">
+                <div class="ui-state ui-state-empty py-20 bg-white/50 backdrop-blur-md rounded-2xl border border-dashed border-slate-300 dark:bg-slate-800/40 dark:border-slate-700">
+                    <div class="ui-state-icon w-12 h-12 rounded-2xl bg-brand-50 text-brand-500 flex items-center justify-center text-xl dark:bg-slate-800">
                         <i class="fa-solid fa-folder-open"></i>
                     </div>
-                    <h4 class="font-semibold text-slate-700 dark:text-slate-200 mb-1">${emptyTitle}</h4>
-                    <p class="text-xs text-slate-500 max-w-xs text-center">${emptyDescription}</p>
+                    <h4 class="ui-state-title font-semibold text-slate-700 dark:text-slate-200">${emptyTitle}</h4>
+                    <p class="ui-state-description text-xs text-slate-500 max-w-xs text-center">${emptyDescription}</p>
                 </div>
             `;
             html += renderPaperStreamPagination(currentTab, currentPage, total, totalPages);
@@ -3426,9 +3427,10 @@
         if (!container) return;
 
         container.innerHTML = `
-            <div class="records-loading-state" role="status">
-                <i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
-                <span>正在获取历史试卷列表...</span>
+            <div class="records-loading-state ui-state ui-state-loading" role="status" aria-live="polite">
+                <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-spinner fa-spin"></i></span>
+                <strong class="ui-state-title">正在获取历史试卷</strong>
+                <span class="ui-state-description">已保存的试卷记录加载完成后会显示在这里。</span>
             </div>
         `;
 
@@ -3443,10 +3445,10 @@
             if (countEl) countEl.textContent = String(papers.length);
             if (papers.length === 0) {
                 container.innerHTML = `
-                    <div class="records-empty-state">
-                        <i class="fa-solid fa-box-open" aria-hidden="true"></i>
-                        <strong>暂无保存的历史试卷</strong>
-                        <span>在智能组卷工作区完成编排后，点击“保存试卷”即可归档到这里。</span>
+                    <div class="records-empty-state ui-state ui-state-empty">
+                        <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-box-open"></i></span>
+                        <strong class="ui-state-title">暂无保存的历史试卷</strong>
+                        <span class="ui-state-description">在智能组卷工作区完成编排后，点击“保存试卷”即可归档到这里。</span>
                     </div>
                 `;
                 return;
@@ -3504,10 +3506,10 @@
             console.error(error);
             if (countEl) countEl.textContent = '0';
             container.innerHTML = `
-                <div class="records-error-state" role="alert">
-                    <i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i>
-                    <strong>历史试卷加载失败</strong>
-                    <span>${escapeHtml(error.message || '请稍后重试')}</span>
+                <div class="records-error-state ui-state ui-state-error" role="alert">
+                    <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-circle-exclamation"></i></span>
+                    <strong class="ui-state-title">历史试卷加载失败</strong>
+                    <span class="ui-state-description">${escapeHtml(error.message || '请稍后重试')}</span>
                 </div>
             `;
         }
