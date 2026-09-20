@@ -7,104 +7,82 @@ let bankQuestionsLoadSequence = 0;
 let bankQuestionsRetryTimer = null;
 
         function initResizers() {
+            const workspace = document.getElementById('bankWorkspaceSection');
             const sidebar = document.getElementById('sidebarSection');
-            const editor = document.getElementById('editorSection');
             const preview = document.getElementById('previewSection');
             const resizer1 = document.getElementById('resizer-1');
-            const resizer2 = document.getElementById('resizer-2');
-            const resizerV = document.getElementById('sidebar-resizer-v');
-            const sidebarTopPanel = document.getElementById('sidebarTopPanel');
-            const mainContainer = document.querySelector('main');
+            if (!workspace || !sidebar || !preview || !resizer1) return;
 
-            let isResizingLeft = false;
-            let isResizingRight = false;
-            let isResizingV = false;
+            const minRatio = Number(resizer1.getAttribute('aria-valuemin')) || 34;
+            const maxRatio = Number(resizer1.getAttribute('aria-valuemax')) || 72;
+            const defaultRatio = 45;
+            let isDragging = false;
 
-            resizer1.addEventListener('mousedown', function(e) {
-                e.preventDefault();
-                isResizingLeft = true;
-                document.body.style.cursor = 'col-resize';
-                document.body.classList.add('select-none');
-            });
-
-            resizer2.addEventListener('mousedown', function(e) {
-                e.preventDefault();
-                isResizingRight = true;
-                document.body.style.cursor = 'col-resize';
-                document.body.classList.add('select-none');
-            });
-
-            if (resizerV && sidebarTopPanel) {
-                resizerV.addEventListener('mousedown', function(e) {
-                    e.preventDefault();
-                    isResizingV = true;
-                    document.body.style.cursor = 'row-resize';
-                    document.body.classList.add('select-none');
-                });
+            function setBankSplitRatio(value, { notify = false } = {}) {
+                const ratio = Math.min(maxRatio, Math.max(minRatio, Number(value) || defaultRatio));
+                workspace.style.setProperty('--bank-list-track', `${ratio}fr`);
+                workspace.style.setProperty('--bank-detail-track', `${100 - ratio}fr`);
+                resizer1.setAttribute('aria-valuenow', String(Math.round(ratio)));
+                if (notify) window.dispatchEvent(new Event('resize'));
+                return ratio;
             }
 
-            document.addEventListener('mousemove', function(e) {
-                if (!isResizingLeft && !isResizingRight && !isResizingV) return;
+            function ratioFromPointer(clientX) {
+                const listRect = sidebar.getBoundingClientRect();
+                const detailRect = preview.getBoundingClientRect();
+                const dividerWidth = resizer1.getBoundingClientRect().width;
+                const availableWidth = Math.max(1, detailRect.right - listRect.left - dividerWidth);
+                const desiredListWidth = clientX - listRect.left - dividerWidth / 2;
+                return desiredListWidth / availableWidth * 100;
+            }
 
-                const containerRect = mainContainer.getBoundingClientRect();
-
-                if (isResizingLeft) {
-                    let newWidth = e.clientX - containerRect.left;
-                    if (newWidth < 45) {
-                        newWidth = 0;
-                        sidebar.style.width = '0px';
-                        sidebar.style.minWidth = '0px';
-                        sidebar.style.borderRightWidth = '0px';
-                    } else {
-                        sidebar.style.borderRightWidth = '1px';
-                        if (newWidth > containerRect.width * 0.5) {
-                            newWidth = containerRect.width * 0.5;
-                        }
-                        sidebar.style.width = newWidth + 'px';
-                    }
+            function finishDragging(event) {
+                if (!isDragging) return;
+                isDragging = false;
+                resizer1.classList.remove('is-dragging');
+                document.body.style.cursor = '';
+                document.body.classList.remove('select-none');
+                if (event && resizer1.hasPointerCapture && resizer1.hasPointerCapture(event.pointerId)) {
+                    resizer1.releasePointerCapture(event.pointerId);
                 }
+                window.dispatchEvent(new Event('resize'));
+            }
 
-                if (isResizingRight) {
-                    let newWidth = containerRect.right - e.clientX;
-                    if (newWidth < 45) {
-                        newWidth = 0;
-                        preview.style.width = '0px';
-                        preview.style.minWidth = '0px';
-                        preview.style.borderLeftWidth = '0px';
-                    } else {
-                        preview.style.borderLeftWidth = '1px';
-                        if (newWidth > containerRect.width * 0.5) {
-                            newWidth = containerRect.width * 0.5;
-                        }
-                        preview.style.width = newWidth + 'px';
-                    }
-                }
-
-                if (isResizingV && sidebar && sidebarTopPanel) {
-                    const sidebarRect = sidebar.getBoundingClientRect();
-                    let newHeight = e.clientY - sidebarRect.top;
-                    const minHeight = 100;
-                    const maxHeight = sidebarRect.height * 0.85;
-
-                    if (newHeight < minHeight) {
-                        newHeight = minHeight;
-                    } else if (newHeight > maxHeight) {
-                        newHeight = maxHeight;
-                    }
-                    sidebarTopPanel.style.height = newHeight + 'px';
-                }
+            resizer1.addEventListener('pointerdown', event => {
+                if (window.matchMedia('(max-width: 960px)').matches) return;
+                event.preventDefault();
+                isDragging = true;
+                resizer1.classList.add('is-dragging');
+                document.body.style.cursor = 'col-resize';
+                document.body.classList.add('select-none');
+                if (resizer1.setPointerCapture) resizer1.setPointerCapture(event.pointerId);
+                setBankSplitRatio(ratioFromPointer(event.clientX));
             });
 
-            document.addEventListener('mouseup', function() {
-                if (isResizingLeft || isResizingRight || isResizingV) {
-                    isResizingLeft = false;
-                    isResizingRight = false;
-                    isResizingV = false;
-                    document.body.style.cursor = '';
-                    document.body.classList.remove('select-none');
-                    window.dispatchEvent(new Event('resize'));
-                }
+            resizer1.addEventListener('pointermove', event => {
+                if (!isDragging) return;
+                event.preventDefault();
+                setBankSplitRatio(ratioFromPointer(event.clientX));
             });
+
+            resizer1.addEventListener('pointerup', finishDragging);
+            resizer1.addEventListener('pointercancel', finishDragging);
+
+            resizer1.addEventListener('keydown', event => {
+                if (!['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key)) return;
+                event.preventDefault();
+                const currentRatio = Number(resizer1.getAttribute('aria-valuenow')) || defaultRatio;
+                const nextRatio = event.key === 'Home'
+                    ? defaultRatio
+                    : currentRatio + (event.key === 'ArrowLeft' ? -2 : 2);
+                setBankSplitRatio(nextRatio, { notify: true });
+            });
+
+            resizer1.addEventListener('dblclick', () => {
+                setBankSplitRatio(defaultRatio, { notify: true });
+            });
+
+            window.setBankSplitRatio = setBankSplitRatio;
         }
 
         // Copy Original LaTeX content to Clipboard
@@ -200,6 +178,7 @@ let bankQuestionsRetryTimer = null;
                 figure_align_custom: Boolean(snapshot.figure_align_custom),
                 tags: snapshot.tags
             };
+            if (typeof refreshEditorFeedback === 'function') refreshEditorFeedback();
         }
         window.backupEditorState = backupEditorState;
 
@@ -502,6 +481,251 @@ let bankQuestionsRetryTimer = null;
             }
         }
 
+
+        function refreshEditorFeedback() {
+            const status = document.getElementById('editorSaveStatus');
+            const hint = document.getElementById('editorValidationHint');
+            if (!status || !hint) return;
+            const missing = [];
+            const modal = document.getElementById('editorSection');
+            [['editContent', '题干'], ['editCompulsory', '学段'], ['editChapter', '章节']].forEach(([id, label]) => {
+                const input = document.getElementById(id);
+                if (!input) return;
+                const empty = !input.value.trim();
+                if (empty) missing.push(label);
+                input.setAttribute('aria-invalid', empty && modal.dataset.validationAttempted === 'true' ? 'true' : 'false');
+            });
+            status.textContent = typeof isQuestionSaveInFlight === 'function' && isQuestionSaveInFlight()
+                ? '正在保存…' : isEditorModified() ? '有未保存的修改' : EditorState.questionId ? '已保存' : '新题目 · 尚未入库';
+            hint.textContent = missing.length ? `保存前请补充：${missing.join('、')}。带 * 的项目为必填项。` : '必填信息已齐全，可以保存。';
+            hint.classList.toggle('is-complete', missing.length === 0);
+        }
+        window.refreshEditorFeedback = refreshEditorFeedback;
+        function updateBankFilterSummary() {
+            const button = document.querySelector('.bank-filter-toggle');
+            const clear = document.getElementById('clearBankFiltersBtn');
+            if (!button || !clear) return;
+            const selected = ['filterCompulsory', 'filterChapter', 'filterKnowledge', 'filterType', 'filterDifficulty', 'filterSource']
+                .map(id => document.getElementById(id)).filter(element => element && element.value);
+            button.textContent = selected.length ? `筛选 (${selected.length})` : '筛选';
+            button.setAttribute('data-tooltip', selected.map(element => element.tagName === 'SELECT' ? element.selectedOptions[0]?.textContent : element.value).join(' / ') || '按学段、章节、小节等条件筛选');
+            clear.hidden = selected.length === 0;
+        }
+        function clearBankFilters() {
+            ['filterCompulsory', 'filterChapter', 'filterKnowledge', 'filterType', 'filterDifficulty', 'filterSource'].forEach(id => {
+                const element = document.getElementById(id);
+                if (element) element.value = '';
+            });
+            document.getElementById('clearFilterSourceBtn')?.classList.add('hidden');
+            const reload = document.getElementById('filterCompulsory')?.onchange;
+            if (typeof reload === 'function') reload();
+            else {
+                currentBankPage = currentDraftPage = 1;
+                if (activeSidebarTab === 'bank') loadQuestions(); else loadDrafts();
+            }
+        }
+        window.clearBankFilters = clearBankFilters;
+        function toggleBankFilters(button) {
+            const fields = document.getElementById('bankFilterFields');
+            const open = fields.classList.toggle('is-open');
+            button.setAttribute('aria-expanded', String(open));
+            document.getElementById('bankWorkspaceSection').classList.toggle('bank-filters-open', open);
+        }
+        function showBankDetail() {
+            if (!window.matchMedia('(max-width: 960px)').matches || (window.PaperStore && window.PaperStore.activeWorkspace !== 'bank')) return;
+            document.getElementById('bankWorkspaceSection').classList.add('bank-detail-open');
+            const back = document.querySelector('.bank-detail-back');
+            if (back) back.focus({preventScroll: true});
+        }
+        function closeBankDetail() {
+            document.getElementById('bankWorkspaceSection').classList.remove('bank-detail-open');
+        }
+        window.toggleBankFilters = toggleBankFilters;
+        window.showBankDetail = showBankDetail;
+        window.closeBankDetail = closeBankDetail;
+        document.addEventListener('input', event => {
+            if (event.target.closest && event.target.closest('#editorSection')) refreshEditorFeedback();
+        });
+        document.addEventListener('change', event => {
+            if (event.target.closest && event.target.closest('#editorSection')) refreshEditorFeedback();
+        });
+
+        let questionEditorRestoreFocus = null;
+
+        function switchQuestionEditorPanel(panelId) {
+            const validPanels = ['classification', 'content', 'answer'];
+            const targetPanel = validPanels.includes(panelId) ? panelId : 'classification';
+            document.getElementById('editorSection').dataset.panel = targetPanel;
+
+            document.querySelectorAll('[data-editor-panel]').forEach(panel => {
+                const isActive = panel.dataset.editorPanel === targetPanel;
+                panel.classList.toggle('active', isActive);
+                panel.classList.toggle('hidden', !isActive);
+                panel.setAttribute('aria-hidden', isActive ? 'false' : 'true');
+            });
+
+            document.querySelectorAll('[data-editor-panel-target]').forEach(button => {
+                const isActive = button.dataset.editorPanelTarget === targetPanel;
+                button.classList.toggle('active', isActive);
+                if (isActive) {
+                    button.setAttribute('aria-current', 'step');
+                } else {
+                    button.removeAttribute('aria-current');
+                }
+            });
+
+            const body = document.querySelector('.question-editor-modal-body');
+            if (body) body.scrollTop = 0;
+        }
+
+        function setQuestionEditorBackgroundInert(isInert) {
+            document.querySelectorAll(
+                '#appNavigation, #appContentShell > header, #bankWorkspaceSection > :not(#editorSection)'
+            ).forEach(element => {
+                element.inert = isInert;
+                if (isInert) {
+                    element.setAttribute('aria-hidden', 'true');
+                } else {
+                    element.removeAttribute('aria-hidden');
+                }
+            });
+        }
+
+        function setQuestionDetailEditAvailability(isAvailable) {
+            const button = document.getElementById('editQuestionFromPreviewBtn');
+            if (!button) return;
+            button.disabled = !isAvailable;
+            button.setAttribute('aria-disabled', isAvailable ? 'false' : 'true');
+        }
+
+        function openQuestionEditorModal(panelId = 'classification') {
+            const modal = document.getElementById('editorSection');
+            const editButton = document.getElementById('editQuestionFromPreviewBtn');
+            if (!modal) return;
+            if (editButton && editButton.disabled && !modal.dataset.allowNewQuestion) {
+                showToast('请先从题库中选择一道题目', 'info');
+                return;
+            }
+
+            questionEditorRestoreFocus = document.activeElement;
+            switchQuestionEditorPanel(panelId);
+            modal.classList.remove('hidden');
+            modal.setAttribute('aria-hidden', 'false');
+            document.body.classList.add('question-editor-open');
+            setQuestionEditorBackgroundInert(true);
+
+            requestAnimationFrame(() => {
+                const activeStep = modal.querySelector('[data-editor-panel-target].active');
+                const title = document.getElementById('editorTitle');
+                if (title) { title.tabIndex = -1; title.focus({ preventScroll: true }); }
+            });
+            delete modal.dataset.allowNewQuestion;
+            delete modal.dataset.validationAttempted;
+            refreshEditorFeedback();
+        }
+
+        function finishCloseQuestionEditorModal() {
+            const modal = document.getElementById('editorSection');
+            if (!modal || modal.classList.contains('hidden')) return;
+            modal.classList.add('hidden');
+            modal.setAttribute('aria-hidden', 'true');
+            document.body.classList.remove('question-editor-open');
+            setQuestionEditorBackgroundInert(false);
+            if (questionEditorRestoreFocus && questionEditorRestoreFocus.isConnected) {
+                questionEditorRestoreFocus.focus({ preventScroll: true });
+            }
+            questionEditorRestoreFocus = null;
+        }
+
+        function restoreEditorAfterDiscard() {
+            if (!originalQuestionState) return;
+            if (originalQuestionState.id && typeof selectQuestion === 'function') {
+                selectQuestion({ id: originalQuestionState.id }, { silent: true });
+                return;
+            }
+            if (originalQuestionState.draftId) {
+                const draft = getLocalStorageDrafts().find(item => item.id === originalQuestionState.draftId);
+                if (draft) selectDraft(draft);
+                return;
+            }
+            if (typeof startNewQuestionWithoutPrompt === 'function') {
+                startNewQuestionWithoutPrompt();
+            }
+        }
+
+        function closeQuestionEditorModal() {
+            const modal = document.getElementById('editorSection');
+            if (!modal || modal.classList.contains('hidden')) return;
+            const shouldRestore = isEditorModified();
+            const isNewQuestionMode = modal.dataset.newQuestionMode === 'true';
+            const returnQuestionId = Number(modal.dataset.returnQuestionId || 0);
+            checkAndSwitch(() => {
+                finishCloseQuestionEditorModal();
+                if (isNewQuestionMode && Number.isSafeInteger(returnQuestionId) && returnQuestionId > 0) {
+                    selectQuestion({ id: returnQuestionId }, { silent: true });
+                } else if (shouldRestore) {
+                    restoreEditorAfterDiscard();
+                }
+                delete modal.dataset.newQuestionMode;
+                delete modal.dataset.returnQuestionId;
+            });
+        }
+
+        function openNewQuestionEditor() {
+            checkAndSwitch(() => {
+                const returnQuestionId = Number(EditorState.questionId || 0);
+                // The list refresh performed by startNewQuestion must not
+                // auto-select the first question again and overwrite the new
+                // question draft while its modal is opening.
+                window.__preserveNewQuestionEditor = true;
+                startNewQuestion();
+                const title = document.getElementById('editorTitle');
+                if (title) title.textContent = '录入新数学题';
+                setQuestionDetailEditAvailability(false);
+                const modal = document.getElementById('editorSection');
+                if (modal) {
+                    modal.dataset.allowNewQuestion = 'true';
+                    modal.dataset.newQuestionMode = 'true';
+                    if (Number.isSafeInteger(returnQuestionId) && returnQuestionId > 0) {
+                        modal.dataset.returnQuestionId = String(returnQuestionId);
+                    }
+                }
+                openQuestionEditorModal('content');
+                if (typeof switchContentTab === 'function') switchContentTab('manual');
+                setQuestionDetailEditAvailability(false);
+            });
+        }
+
+        document.addEventListener('keydown', event => {
+            const modal = document.getElementById('editorSection');
+            if (!modal || modal.classList.contains('hidden')) return;
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                closeQuestionEditorModal();
+                return;
+            }
+            if (event.key !== 'Tab') return;
+            const focusable = Array.from(modal.querySelectorAll(
+                'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+            )).filter(element => element.getClientRects().length > 0);
+            if (focusable.length === 0) return;
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        });
+
+        window.switchQuestionEditorPanel = switchQuestionEditorPanel;
+        window.openQuestionEditorModal = openQuestionEditorModal;
+        window.closeQuestionEditorModal = closeQuestionEditorModal;
+        window.openNewQuestionEditor = openNewQuestionEditor;
+        window.setQuestionDetailEditAvailability = setQuestionDetailEditAvailability;
+
         // ==========================================
         //         LOCALSTORAGE DRAFTS SYSTEM
         // ==========================================
@@ -608,8 +832,8 @@ let bankQuestionsRetryTimer = null;
             
             // Populate form fields
             document.getElementById('editContent').value = draft.content || '';
-            document.getElementById('editQType').value = draft.question_type || 'single_choice';
-            document.getElementById('editDifficulty').value = draft.difficulty || 'easy_error';
+            setEditorMetadataValue(document.getElementById('editQType'), draft.question_type || 'single_choice');
+            setEditorMetadataValue(document.getElementById('editDifficulty'), draft.difficulty || 'easy_error');
             document.getElementById('editSource').value = draft.source || '';
             document.getElementById('editAnswerMarkdown').value = draft.answer_markdown || '';
             document.getElementById('editReview').value = draft.review || '';
@@ -683,6 +907,7 @@ let bankQuestionsRetryTimer = null;
             
             // Backup draft state
             backupEditorState(null, draft.id);
+            setQuestionDetailEditAvailability(true);
             
             // Active highlighting in sidebar drafts list
             if (activeSidebarTab === 'drafts') {
@@ -702,12 +927,14 @@ let bankQuestionsRetryTimer = null;
         }
 
         function loadDrafts() {
+            if (typeof updateBankFilterSummary === 'function') updateBankFilterSummary();
             const qListContainer = document.getElementById('questionsList');
             const q = document.getElementById('searchInput').value.trim().toLowerCase();
             const qtype = document.getElementById('filterType').value;
             const difficulty = document.getElementById('filterDifficulty').value;
             const compulsory = document.getElementById('filterCompulsory').value;
             const chapter = document.getElementById('filterChapter').value;
+            const knowledge = document.getElementById('filterKnowledge')?.value || '';
             const source = document.getElementById('filterSource') ? document.getElementById('filterSource').value.trim().toLowerCase() : '';
             
             let drafts = getLocalStorageDrafts();
@@ -732,6 +959,8 @@ let bankQuestionsRetryTimer = null;
                 drafts = drafts.filter(item => item.category_chapter === chapter);
             }
             
+            if (knowledge) drafts = drafts.filter(item => item.category_knowledge === knowledge);
+
             // Filter by source
             if (source) {
                 drafts = drafts.filter(item => (item.source || '').toLowerCase().includes(source));
@@ -786,9 +1015,10 @@ let bankQuestionsRetryTimer = null;
             
             if (totalItems === 0) {
                 qListContainer.innerHTML = `
-                    <div class="p-6 text-center text-slate-400 text-xs">
-                        <i class="fa-solid fa-box-open text-2xl mb-1 text-slate-400"></i>
-                        <p>草稿箱空空如也</p>
+                    <div class="ui-state ui-state-empty bank-list-state">
+                        <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-box-open"></i></span>
+                        <strong class="ui-state-title">草稿箱空空如也</strong>
+                        <span class="ui-state-description">编辑题目时保存的草稿会显示在这里。</span>
                     </div>`;
                 renderSidebarPagination(0, 1, 'drafts');
                 return;
@@ -1224,57 +1454,45 @@ let bankQuestionsRetryTimer = null;
         function populateFilterDropdowns() {
             const compSelect = document.getElementById('filterCompulsory');
             const chapSelect = document.getElementById('filterChapter');
-            
-            if (!compSelect || !chapSelect) return;
-            if (!categoryTree || typeof categoryTree !== 'object') {
-                console.warn('[Security Shield] 分类数据未准备完毕，跳过过滤框分类级联填充');
-                return;
+            const knowSelect = document.getElementById('filterKnowledge');
+            if (!compSelect || !chapSelect || !knowSelect || !categoryTree || typeof categoryTree !== 'object') return;
+            const previous = [compSelect.value, chapSelect.value, knowSelect.value];
+            function fill(select, values, placeholder, selected = '') {
+                select.innerHTML = '<option value="">' + placeholder + '</option>' + values.map(value =>
+                    `<option value="${window.MathBankSafe.escapeAttribute(value)}">${window.MathBankSafe.escapeText(value)}</option>`).join('');
+                select.value = values.includes(selected) ? selected : '';
             }
-            
-            compSelect.innerHTML = '<option value="">所有学段/必选修</option>';
-            Object.keys(categoryTree).forEach(c => {
-                compSelect.innerHTML += `<option value="${window.MathBankSafe.escapeAttribute(c)}">${window.MathBankSafe.escapeText(c)}</option>`;
-            });
-            
-            compSelect.onchange = () => {
-                const comp = compSelect.value;
-                chapSelect.innerHTML = '<option value="">所有章节</option>';
-                
-                if (comp && categoryTree[comp]) {
-                    chapSelect.classList.remove('hidden');
-                    Object.keys(categoryTree[comp]).forEach(ch => {
-                        chapSelect.innerHTML += `<option value="${window.MathBankSafe.escapeAttribute(ch)}">${window.MathBankSafe.escapeText(ch)}</option>`;
-                    });
-                } else {
-                    chapSelect.classList.add('hidden');
-                }
-                
-                // Reset page numbers
+            function fillKnowledge(selected = '') {
+                const values = categoryTree[compSelect.value]?.[chapSelect.value];
+                fill(knowSelect, Array.isArray(values) ? values : [], chapSelect.value ? '所有小节' : '先选择章节', selected);
+                knowSelect.disabled = !Array.isArray(values);
+                knowSelect.classList.remove('hidden');
+            }
+            function fillChapters(chapter = '', knowledge = '') {
+                const chapters = categoryTree[compSelect.value];
+                fill(chapSelect, chapters ? Object.keys(chapters) : [], chapters ? '所有章节' : '先选择学段', chapter);
+                chapSelect.disabled = !chapters;
+                chapSelect.classList.remove('hidden');
+                fillKnowledge(knowledge);
+            }
+            function reload() {
                 currentBankPage = 1;
                 currentDraftPage = 1;
-                
-                if (activeSidebarTab === 'bank') {
-                    loadQuestions(); // Refilter
-                } else {
-                    loadDrafts(); // Refilter
-                }
-            };
-            
-            chapSelect.onchange = () => {
-                // Reset page numbers
-                currentBankPage = 1;
-                currentDraftPage = 1;
-                
-                if (activeSidebarTab === 'bank') {
-                    loadQuestions(); // Refilter
-                } else {
-                    loadDrafts(); // Refilter
-                }
-            };
+                updateBankFilterSummary();
+                if (activeSidebarTab === 'bank') loadQuestions();
+                else loadDrafts();
+            }
+            fill(compSelect, Object.keys(categoryTree), '所有学段', previous[0]);
+            fillChapters(previous[1], previous[2]);
+            compSelect.onchange = () => { fillChapters(); reload(); };
+            chapSelect.onchange = () => { fillKnowledge(); reload(); };
+            knowSelect.onchange = reload;
+            updateBankFilterSummary();
         }
 
         // Load and List Saved Questions
         function loadQuestions(retryCount = 0) {
+            if (typeof updateBankFilterSummary === 'function') updateBankFilterSummary();
             const loadSequence = ++bankQuestionsLoadSequence;
             if (bankQuestionsRetryTimer) {
                 clearTimeout(bankQuestionsRetryTimer);
@@ -1293,6 +1511,7 @@ let bankQuestionsRetryTimer = null;
             const difficulty = document.getElementById('filterDifficulty').value;
             const compulsory = document.getElementById('filterCompulsory').value;
             const chapter = document.getElementById('filterChapter').value;
+            const knowledge = document.getElementById('filterKnowledge')?.value || '';
             const source = document.getElementById('filterSource') ? document.getElementById('filterSource').value : '';
             const sortOrder = document.getElementById('filterSort') ? document.getElementById('filterSort').value : 'desc';
             const requestedPage = Math.max(1, currentBankPage);
@@ -1303,6 +1522,7 @@ let bankQuestionsRetryTimer = null;
             if (difficulty) params.append('difficulty', difficulty);
             if (compulsory) params.append('compulsory', compulsory);
             if (chapter) params.append('chapter', chapter);
+            if (knowledge) params.append('knowledge', knowledge);
             if (source) params.append('source', source);
             params.append('page', String(requestedPage));
             params.append('page_size', String(PAGE_LIMIT));
@@ -1340,12 +1560,16 @@ let bankQuestionsRetryTimer = null;
 
                     currentBankPage = Math.min(responsePage, totalPages);
                     qListContainer.innerHTML = '';
+                    const shouldAutoSelectFirstQuestion = !window.__preserveNewQuestionEditor &&
+                        !EditorState.questionId &&
+                        questions.length > 0 && !isEditorModified();
                     
                     if (totalItems === 0) {
                         qListContainer.innerHTML = `
-                            <div class="p-6 text-center text-slate-400 text-xs">
-                                <i class="fa-solid fa-box-open text-2xl mb-1 text-slate-400"></i>
-                                <p>未找到匹配题目</p>
+                            <div class="ui-state ui-state-empty bank-list-state">
+                                <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-box-open"></i></span>
+                                <strong class="ui-state-title">未找到匹配题目</strong>
+                                <span class="ui-state-description">请调整搜索词或筛选条件后重试。</span>
                             </div>`;
                         renderSidebarPagination(0, 1, 'bank');
                         return;
@@ -1357,7 +1581,7 @@ let bankQuestionsRetryTimer = null;
                         const typeText = getTypeText(item.question_type);
                         
                         const itemCard = document.createElement('div');
-                        itemCard.className = `question-card p-3.5 mx-1.5 flex flex-col space-y-2 select-none group relative ${EditorState.questionId === item.id ? 'active' : ''}`;
+                        itemCard.className = `question-card bank-question-card p-3.5 mx-1.5 flex flex-col space-y-2 select-none group relative ${EditorState.questionId === item.id ? 'active' : ''}`;
                         itemCard.dataset.id = item.id;
                         
                         const cleanContent = parseMarkdownWithMath(item.content || '', item.image_layouts || {});
@@ -1389,10 +1613,10 @@ let bankQuestionsRetryTimer = null;
                         }
 
                         itemCard.innerHTML = `
-                            <div class="flex items-start justify-between">
-                                <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-500 shrink-0 mt-0.5">${window.MathBankSafe.escapeText(typeText)}</span>
-                                <div class="flex items-center gap-1.5 justify-end flex-wrap flex-1 ml-2">
-                                    ${tagsHtml}
+                            <div class="bank-question-card-header flex items-start justify-between">
+                                <span class="bank-question-type text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-500 shrink-0 mt-0.5">${window.MathBankSafe.escapeText(typeText)}</span>
+                                <div class="bank-question-badges flex items-center gap-1.5 justify-end flex-wrap flex-1 ml-2">
+                                    <div class="bank-question-tags">${tagsHtml}</div>
                                     ${difficultyBadge}
                                     <span class="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-brand-50 text-brand-600 shadow-sm">#${window.MathBankSafe.escapeText(item.seq_num)}</span>
                                     <!-- Delete Button -->
@@ -1401,15 +1625,11 @@ let bankQuestionsRetryTimer = null;
                                     </button>
                                 </div>
                             </div>
-                            <div class="text-xs text-slate-700 leading-relaxed font-medium line-clamp-2 card-formula-render">${cleanContent || '[空白题干]'}</div>
-                            <!-- Time Badge -->
-                            <div class="text-[8px] text-slate-400/80 flex items-center space-x-1 py-0.5">
-                                <i class="fa-regular fa-clock text-[8px]"></i>
-                                <span>录入：${window.MathBankSafe.escapeText(formatChineseDate(item.created_at))}</span>
-                            </div>
-                            <div class="flex justify-between items-center text-[9px] text-slate-400 border-t pt-1.5">
+                            <div class="bank-question-excerpt text-xs text-slate-700 leading-relaxed font-medium line-clamp-2 card-formula-render">${cleanContent || '[空白题干]'}</div>
+                            <div class="bank-question-meta flex justify-between items-center text-[9px] text-slate-400 border-t pt-1.5">
                                 <span class="truncate max-w-[120px] font-semibold"><i class="fa-solid fa-folder-open mr-0.5"></i>${window.MathBankSafe.escapeText(item.category_knowledge || item.category_chapter || '未分类')}</span>
                                 <span class="font-mono text-slate-400">${window.MathBankSafe.escapeText(item.source ? item.source.substring(0, 12) : '本地录入')}</span>
+                                <time class="bank-question-time" title="录入于 ${window.MathBankSafe.escapeText(formatChineseDate(item.created_at))}">${window.MathBankSafe.escapeText(String(item.created_at || '').slice(0, 10))}</time>
                             </div>
                         `;
                         
@@ -1434,6 +1654,13 @@ let bankQuestionsRetryTimer = null;
                         
                         qListContainer.appendChild(itemCard);
                     });
+
+                    if (shouldAutoSelectFirstQuestion) {
+                        // Initial list hydration is background work, not a
+                        // user selection; avoid showing a success toast on
+                        // every page refresh while keeping the first preview.
+                        selectQuestion(questions[0], { silent: true });
+                    }
                     
                     renderSidebarPagination(totalItems, currentBankPage, 'bank');
                 })
@@ -1451,11 +1678,11 @@ let bankQuestionsRetryTimer = null;
                         }, 1500);
                     } else {
                         qListContainer.innerHTML = `
-                            <div class="p-6 text-center text-red-500 text-xs">
-                                <i class="fa-solid fa-triangle-exclamation text-2xl mb-1 text-red-400"></i>
-                                <p class="font-semibold">获取题库列表失败</p>
-                                <p class="text-[10px] text-slate-500 mt-0.5 mb-2.5">后台服务正在启动或连接超时</p>
-                                <button onclick="loadQuestions()" class="px-3.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 font-bold rounded-xl transition-all border border-red-200 hover:scale-95 text-[10px] inline-flex items-center space-x-1 cursor-pointer">
+                            <div class="ui-state ui-state-error bank-list-state" role="alert">
+                                <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-triangle-exclamation"></i></span>
+                                <strong class="ui-state-title">获取题库列表失败</strong>
+                                <span class="ui-state-description">后台服务正在启动或连接超时</span>
+                                <button onclick="loadQuestions()" class="ui-state-action inline-flex items-center space-x-1 cursor-pointer">
                                     <i class="fa-solid fa-arrows-rotate"></i><span>重新加载</span>
                                 </button>
                             </div>`;
@@ -1465,6 +1692,9 @@ let bankQuestionsRetryTimer = null;
                 })
                 .finally(() => {
                     if (loadSequence !== bankQuestionsLoadSequence) return;
+                    if (window.__preserveNewQuestionEditor) {
+                        window.__preserveNewQuestionEditor = false;
+                    }
                     qListContainer.removeAttribute('aria-busy');
                     if (bankQuestionsLoadController === requestController) {
                         bankQuestionsLoadController = null;
@@ -1478,6 +1708,10 @@ let bankQuestionsRetryTimer = null;
         function renderSidebarPagination(totalItems, currentPage, tabType) {
             const container = document.getElementById('sidebarPagination');
             if (!container) return;
+            const summary = document.getElementById('questionResultSummary');
+            if (summary) {
+                summary.textContent = `共 ${totalItems} 道题`;
+            }
             
             if (totalItems === 0) {
                 container.innerHTML = '';
@@ -1488,70 +1722,19 @@ let bankQuestionsRetryTimer = null;
             
             const totalPages = Math.ceil(totalItems / PAGE_LIMIT) || 1;
             
-            // Build pages array with sliding window folding
-            let pages = [];
-            if (totalPages <= 5) {
-                for (let i = 1; i <= totalPages; i++) {
-                    pages.push(i);
-                }
-            } else {
-                pages.push(1);
-                
-                let start = Math.max(2, currentPage - 1);
-                let end = Math.min(totalPages - 1, currentPage + 1);
-                
-                if (currentPage <= 3) {
-                    end = 4;
-                }
-                if (currentPage >= totalPages - 2) {
-                    start = totalPages - 3;
-                }
-                
-                if (start > 2) {
-                    pages.push('...');
-                }
-                
-                for (let i = start; i <= end; i++) {
-                    pages.push(i);
-                }
-                
-                if (end < totalPages - 1) {
-                    pages.push('...');
-                }
-                
-                pages.push(totalPages);
+            if (totalPages <= 1) {
+                container.innerHTML = '';
+                container.style.display = 'none';
+                return;
             }
-            
-            let pagesHtml = '';
-            pages.forEach(p => {
-                if (p === '...') {
-                    pagesHtml += `<span class="pagination-ellipsis">...</span>`;
-                } else {
-                    pagesHtml += `<button class="pagination-btn ${p === currentPage ? 'active' : ''}" onclick="goToSidebarPage(${p}, '${tabType}')">${p}</button>`;
-                }
-            });
-            
             container.innerHTML = `
-                <div class="flex items-center justify-between text-[10px] text-slate-400 font-semibold px-0.5">
-                    <span>共 ${totalItems} 题 / ${totalPages} 页</span>
-                    <div class="flex items-center space-x-1">
-                        <span>跳转至</span>
-                        <input type="number" min="1" max="${totalPages}" value="${currentPage}" class="pagination-jump-input" onkeydown="if(event.key==='Enter') jumpToSidebarPage(this.value, ${totalPages}, '${tabType}')">
-                        <span>页</span>
-                    </div>
-                </div>
-                <div class="sidebar-pagination-controls flex items-center justify-center space-x-1">
-                    <button class="pagination-btn pagination-btn-nav" ${currentPage === 1 ? 'disabled' : ''} onclick="goToSidebarPage(${currentPage - 1}, '${tabType}')">
-                        <i class="fa-solid fa-chevron-left text-[9px] mr-0.5"></i>上一页
-                    </button>
-                    ${pagesHtml}
-                    <button class="pagination-btn pagination-btn-nav" ${currentPage === totalPages ? 'disabled' : ''} onclick="goToSidebarPage(${currentPage + 1}, '${tabType}')">
-                        下一页<i class="fa-solid fa-chevron-right text-[9px] ml-0.5"></i>
-                    </button>
-                </div>
-            `;
+                <div class="sidebar-pagination-controls flex items-center justify-between">
+                    <button class="pagination-btn pagination-btn-nav" ${currentPage === 1 ? 'disabled' : ''} onclick="goToSidebarPage(${currentPage - 1}, '${tabType}')">上一页</button>
+                    <label class="pagination-page-label">第 <input type="number" aria-label="跳转页码" min="1" max="${totalPages}" value="${currentPage}" class="pagination-jump-input" onkeydown="if(event.key==='Enter') jumpToSidebarPage(this.value, ${totalPages}, '${tabType}')"> / ${totalPages} 页</label>
+                    <button class="pagination-btn pagination-btn-nav" ${currentPage === totalPages ? 'disabled' : ''} onclick="goToSidebarPage(${currentPage + 1}, '${tabType}')">下一页</button>
+                </div>`;
         }
-        
+
         function goToSidebarPage(page, tabType) {
             if (tabType === 'bank') {
                 currentBankPage = page;
@@ -1602,7 +1785,7 @@ let bankQuestionsRetryTimer = null;
                 : '<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-200 text-slate-500">编号：新题目</span>';
 
             const createdAtBadge = EditorState.createdAt
-                ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 inline-flex items-center"><i class="fa-regular fa-clock mr-1"></i>录入于：${escapeEditorMetaText(formatChineseDate(EditorState.createdAt))}</span>`
+                ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 inline-flex items-center"><i class="fa-regular fa-clock mr-1"></i>${escapeEditorMetaText(String(EditorState.createdAt).slice(0, 10))}</span>`
                 : '';
 
             let paperTagsHtml = '';
@@ -1642,7 +1825,11 @@ let bankQuestionsRetryTimer = null;
         function choicesGridOverflows(grid) {
             return Array.from(grid.children).some(item => {
                 const content = item.querySelector('.choices-content') || item;
-                return content.scrollWidth > content.clientWidth + 1;
+                const imageMinWidth = grid.closest('.paper-choice-options-row') ? 100 : 140;
+                const imageTooSmall = Array.from(content.querySelectorAll('img')).some(img =>
+                    Math.min(img.naturalWidth, imageMinWidth) > content.clientWidth + 1
+                );
+                return imageTooSmall || content.scrollWidth > content.clientWidth + 1;
             });
         }
 
@@ -1675,6 +1862,11 @@ let bankQuestionsRetryTimer = null;
 
             grids.forEach(grid => {
                 adaptSingleChoicesGrid(grid);
+                grid.querySelectorAll('img').forEach(img => {
+                    if (!img.complete) {
+                        img.addEventListener('load', () => adaptSingleChoicesGrid(grid), { once: true });
+                    }
+                });
                 if (typeof ResizeObserver !== 'undefined' && !choicesGridResizeObservers.has(grid)) {
                     const observer = new ResizeObserver(() => {
                         window.requestAnimationFrame(() => adaptSingleChoicesGrid(grid));
@@ -2117,8 +2309,13 @@ let bankQuestionsRetryTimer = null;
                 const items = inner.split(/\\item/).map(item => item.trim()).filter(item => item.length > 0);
                 const labels = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
                 let maxLen = 0;
+                const hasImages = items.some(item => /!\[[^\]]*\]\([^)]+\)/.test(item));
+                const fourImageOptions = items.length === 4 && items.every(item =>
+                    /^!\[[^\]]*\]\([^)]+\)$/.test(item.trim())
+                );
                 items.forEach(item => {
-                    const approxText = item.replace(/@@MATH_PLACEHOLDER_\d+@@/g, '********');
+                    const approxText = item.replace(/!\[[^\]]*\]\([^)]+\)/g, '')
+                        .replace(/@@MATH_PLACEHOLDER_\d+@@/g, '********');
                     if (approxText.length > maxLen) {
                         maxLen = approxText.length;
                     }
@@ -2127,12 +2324,12 @@ let bankQuestionsRetryTimer = null;
                 let gridCols = "grid-cols-4";
                 if (maxLen > 24) {
                     gridCols = "grid-cols-1";
-                } else if (maxLen > 10) {
+                } else if ((hasImages && !fourImageOptions) || maxLen > 10) {
                     gridCols = "grid-cols-2";
                 }
 
                 const preferredColumns = gridCols === 'grid-cols-1' ? 1 : (gridCols === 'grid-cols-2' ? 2 : 4);
-                let html = `<div class="grid ${gridCols} gap-2 my-2 select-none choices-grid items-baseline" data-preferred-columns="${preferredColumns}">`;
+                let html = `<div class="grid ${gridCols} gap-2 my-2 select-none choices-grid ${hasImages ? 'choices-has-images' : ''} items-baseline" data-preferred-columns="${preferredColumns}">`;
                 items.forEach((item, idx) => {
                     const label = labels[idx] || (idx + 1);
                     let cleanItem = item;
@@ -2140,7 +2337,7 @@ let bankQuestionsRetryTimer = null;
                     if (/\\(dfrac|frac|sqrt|cdot|times|pm|le|ge|ne|in|vec|mathbf|boldsymbol|mathrm|text|alpha|beta|gamma|delta|theta|pi|varphi|omega)\b/.test(cleanItem) && !/\$/.test(cleanItem)) {
                         cleanItem = '$' + cleanItem + '$';
                     }
-                    html += `<div class="choices-item flex items-baseline"><span class="choices-label font-bold mr-1.5 text-slate-800 shrink-0">${label}.</span><span class="choices-content flex-1 [&>p]:m-0 [&>p]:inline">${cleanItem}</span></div>`;
+                    html += `<div class="choices-item flex items-baseline"><span class="choices-label font-bold mr-1.5 text-slate-800 shrink-0">${label}.</span><div class="choices-content flex-1 [&>p]:m-0 [&>p]:inline">${cleanItem}</div></div>`;
                 });
                 html += '</div>';
                 return html;

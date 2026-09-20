@@ -55,6 +55,7 @@ def test_astra_drops_logprobs_and_preserves_explicit_completion_limit():
 def test_deepseek_official_and_siliconflow_use_different_switches(task, enabled):
     actual_enabled = enabled if task == 'solve' else False
     for config, switch in [
+        ('DEEPSEEK/deepseek-flash', 'thinking'),
         ('DEEPSEEK/deepseek-v4-pro', 'thinking'),
         ('DEEPSEEK/deepseek-v4-flash', 'thinking'),
         ('SILICONFLOW/deepseek-ai/DeepSeek-V4-Pro', 'enable_thinking'),
@@ -154,3 +155,29 @@ def test_siliconflow_v32_keeps_switch_without_v4_effort_field():
     p = configured('SILICONFLOW/Pro/deepseek-ai/DeepSeek-V3.2:max')
     result = apply_model_thinking_policy({'model': p.model_name}, provider=p, task='solve', thinking_enabled=True)
     assert result == {'model': p.model_name, 'enable_thinking': True}
+
+
+@pytest.mark.parametrize('task', TASKS)
+def test_deepseek_flash_uses_documented_thinking_fields(task):
+    provider = configured('DEEPSEEK/deepseek-flash')
+    payload = {'model':provider.model_name, 'enable_thinking':True, 'thinking_budget':2048,
+               'temperature':0.2, 'top_p':0.97, 'presence_penalty':0.2, 'frequency_penalty':0.2}
+    original = deepcopy(payload)
+    result = apply_model_thinking_policy(payload, provider=provider, task=task, thinking_enabled=True)
+    enabled = task in {'solve', 'draw'}
+    assert result['thinking'] == {'type':'enabled' if enabled else 'disabled'}
+    assert 'enable_thinking' not in result and 'thinking_budget' not in result
+    if enabled:
+        assert result['top_p'] == 0.97
+        assert all(field not in result for field in ('temperature', 'presence_penalty', 'frequency_penalty'))
+    else:
+        assert 'top_p' not in result and 'reasoning_effort' not in result
+    assert payload == original
+
+
+@pytest.mark.parametrize('effort,expected', [('low','low'), ('medium','high'), ('high','high'), ('xhigh','high'), ('max','max')])
+def test_deepseek_flash_effort_mapping(effort, expected):
+    provider = configured('DEEPSEEK/deepseek-flash:' + effort)
+    result = apply_model_thinking_policy({'model':provider.model_name}, provider=provider, task='ocr')
+    assert result['thinking'] == {'type':'enabled'}
+    assert result['reasoning_effort'] == expected

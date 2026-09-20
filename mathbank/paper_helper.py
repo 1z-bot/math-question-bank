@@ -388,6 +388,26 @@ def clean_content_for_latex(
     if r"\begin{tikzpicture}" in text and not preserve_image_positions:
         text = re.sub(r'!\[.*?\]\([^)]+\)', '', text)
 
+    # Four image-only options form one compact row. Mark only complete groups;
+    # prose, multi-image options and authored choices settings keep their layout.
+    compact_choice_ranges = []
+    choice_offset = 0
+
+    def compact_image_choices(match):
+        nonlocal choice_offset
+        parts = re.split(r"\\item\b", match.group(1))
+        if len(parts) == 5 and not parts[0].strip() and all(
+            _MARKDOWN_IMAGE_RE.fullmatch(part.strip()) for part in parts[1:]
+        ):
+            replacement = r"\begin{choices}[columns=4,label-pos=left]" + match.group(1) + r"\end{choices}"
+            start = match.start() + choice_offset
+            compact_choice_ranges.append((start, start + len(replacement)))
+            choice_offset += len(replacement) - len(match.group(0))
+            return replacement
+        return match.group(0)
+
+    text = re.sub(r"\\begin\{choices\}([\s\S]*?)\\end\{choices\}", compact_image_choices, text)
+
     # Convert Markdown images ![](/static/uploads/xxx.png) or ![](uploads/xxx.png) to \includegraphics{...}
     def replace_img(match):
         img_path = match.group(1)
@@ -395,6 +415,17 @@ def clean_content_for_latex(
         inside_table = _image_is_inside_table_environment(text, match.start())
         code = (tikz_sources or {}).get(_tikz_image_key(img_path))
         layout = (image_layouts or {}).get(image_key(img_path))
+        if any(start <= match.start() < end for start, end in compact_choice_ranges):
+            if code:
+                if r"\begin{tikzpicture}" not in code:
+                    code = "\\begin{tikzpicture}\n" + code + "\n\\end{tikzpicture}"
+                rendered = (r"\adjustbox{max width=\linewidth}{"
+                            r"\adjustbox{max width=3.0cm,max height=3.0cm,keepaspectratio}{" + code + "\n}}")
+            else:
+                rendered = _bounded_includegraphics(base_name, "3.0cm", "3.0cm")
+            token = f"{token_prefix}N{len(tikz_blocks)}END"
+            tikz_blocks[token] = rendered
+            return token
         if layout:
             # All values are normalized enums. Wrap the result in a protected
             # token so subsequent prose formatting cannot alter generated TeX.

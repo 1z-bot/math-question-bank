@@ -100,7 +100,7 @@ def test_editor_identity_and_meta_preview_have_single_sources():
     assert combined_source.count("getElementById('paperBadges')") == 1
     assert "window.renderEditorPaperMeta = renderEditorPaperMeta" in editor_source
     assert "renderEditorPaperMeta();" in import_source
-    select_start = import_source.index("function selectQuestion(item)")
+    select_start = import_source.index("function selectQuestion(")
     select_end = import_source.index("window.reloadCurrentQuestionSilently", select_start)
     select_source = import_source[select_start:select_end]
     assert "EditorState.useQuestion(item)" not in select_source

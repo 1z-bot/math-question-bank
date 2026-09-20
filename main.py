@@ -641,7 +641,7 @@ def read_index():
             html_content = f.read()
         
         # Inject dynamic cache-busting version parameter based on file mtime
-        js_files = ["api.js", "editor.js", "ocr.js", "import.js", "paper.js"]
+        js_files = ["api.js", "editor.js", "ocr.js", "import.js", "paper.js", "dashboard.js"]
         for js in js_files:
             js_path = str(STATIC_JS_DIR / js)
             mtime = int(os.path.getmtime(js_path)) if os.path.exists(js_path) else 0
@@ -813,6 +813,12 @@ def ocr_via_provider(
 ) -> str:
     """Use one resolved multimodal provider for formula and text OCR."""
     import base64
+
+    if not provider.supports_image_input:
+        raise ValueError(
+            f"{provider.provider_label} 模型 {provider.model_name} 不支持图像输入，"
+            "请在默认公式识图模型中选择支持图片的模型。"
+        )
 
     print(
         f"[OCR Flow] 正在向 {provider.provider_label} 提交多模态识别任务: "
@@ -1058,6 +1064,7 @@ def ocr_formula(
         provider = ""
 
         known_ocr_engines = {
+            "deepseek",
             "siliconflow",
             "ali_bailian",
             "bailian",
@@ -1091,7 +1098,7 @@ def ocr_formula(
                 )
 
         if not latex_content:
-            raise RuntimeError("当前分配的识图引擎均无法启动或识别失败。请检查右上角「API设置」中是否正确配置了 硅基流动(SiliconFlow) 或是 阿里百炼(Alibaba Bailian) 的 API Key。")
+            raise RuntimeError("当前分配的识图引擎无法启动或识别失败。请检查系统设置中所选识图平台的 API Key、模型名称和接口地址。")
 
         # 成功，返回且进一步清洗
         if latex_content:
@@ -1373,11 +1380,12 @@ def get_settings():
     zz_claude_ocr_model = os.getenv("ZHONGZHAN_CLAUDE_OCR_MODEL", "claude-3-5-sonnet")
     
     prefer_engine = os.getenv("OCR_PREFER_ENGINE", "siliconflow")
+    ds_model = os.getenv("DEEPSEEK_OCR_MODEL") or "deepseek-flash"
     sf_model = os.getenv("SILICONFLOW_OCR_MODEL", "Qwen/Qwen3-VL-8B-Instruct")
     ali_model = os.getenv("ALI_BAILIAN_OCR_MODEL", "qwen3.7-flash")
     prefer_solve_model = os.getenv("PREFER_SOLVE_MODEL", "deepseek-v4-pro")
-    prefer_parse_model = os.getenv("PREFER_PARSE_MODEL", "deepseek-v4-flash")
-    prefer_classify_model = os.getenv("PREFER_CLASSIFY_MODEL") or os.getenv("DEEPSEEK_CLASSIFY_MODEL", "deepseek-v4-flash")
+    prefer_parse_model = os.getenv("PREFER_PARSE_MODEL", "deepseek-flash")
+    prefer_classify_model = os.getenv("PREFER_CLASSIFY_MODEL") or os.getenv("DEEPSEEK_CLASSIFY_MODEL", "deepseek-flash")
     prefer_draw_model = os.getenv("PREFER_DRAW_MODEL", "Qwen/Qwen3-VL-32B-Instruct")
     
     masked_ds = ""
@@ -1411,6 +1419,7 @@ def get_settings():
         "zhongzhan_claude_base_url": zz_claude_base,
         "zhongzhan_claude_ocr_model": zz_claude_ocr_model,
         "prefer_engine": prefer_engine,
+        "deepseek_model": ds_model,
         "siliconflow_model": sf_model,
         "ali_bailian_model": ali_model,
         "prefer_solve_model": prefer_solve_model,
@@ -1431,14 +1440,17 @@ def save_settings(
     zhongzhan_claude_base_url: str = Form(""),
     zhongzhan_claude_ocr_model: str = Form(""),
     prefer_engine: str = Form("siliconflow"),
+    deepseek_model: str | None = Form(None),
     siliconflow_model: str = Form("Qwen/Qwen3-VL-8B-Instruct"),
     ali_bailian_model: str = Form("qwen3.7-flash"),
     prefer_solve_model: str = Form("deepseek-v4-pro"),
-    prefer_parse_model: str = Form("deepseek-v4-flash"),
-    prefer_classify_model: str = Form("deepseek-v4-flash"),
+    prefer_parse_model: str = Form("deepseek-flash"),
+    prefer_classify_model: str = Form("deepseek-flash"),
     prefer_draw_model: str = Form("Qwen/Qwen3-VL-32B-Instruct")
 ):
     try:
+        # Older clients and other OCR providers may omit this new field.
+        deepseek_model = deepseek_model or os.getenv("DEEPSEEK_OCR_MODEL") or "deepseek-flash"
         settings_values = {
             "deepseek_key": deepseek_key,
             "siliconflow_key": siliconflow_key,
@@ -1450,6 +1462,7 @@ def save_settings(
             "zhongzhan_claude_base_url": zhongzhan_claude_base_url,
             "zhongzhan_claude_ocr_model": zhongzhan_claude_ocr_model,
             "prefer_engine": prefer_engine,
+            "deepseek_model": deepseek_model,
             "siliconflow_model": siliconflow_model,
             "ali_bailian_model": ali_bailian_model,
             "prefer_solve_model": prefer_solve_model,
@@ -1480,6 +1493,7 @@ def save_settings(
         
         keys_replaced = {
             "DEEPSEEK_API_KEY": False,
+            "DEEPSEEK_OCR_MODEL": False,
             "SILICONFLOW_API_KEY": False,
             "ALI_BAILIAN_API_KEY": False,
             "ZHONGZHAN_GPT_API_KEY": False,
@@ -1507,6 +1521,9 @@ def save_settings(
             if line_strip.startswith("DEEPSEEK_API_KEY="):
                 new_lines.append(f"DEEPSEEK_API_KEY={deepseek_key}\n")
                 keys_replaced["DEEPSEEK_API_KEY"] = True
+            elif line_strip.startswith("DEEPSEEK_OCR_MODEL="):
+                new_lines.append(f"DEEPSEEK_OCR_MODEL={deepseek_model}\n")
+                keys_replaced["DEEPSEEK_OCR_MODEL"] = True
             elif line_strip.startswith("SILICONFLOW_API_KEY="):
                 new_lines.append(f"SILICONFLOW_API_KEY={siliconflow_key}\n")
                 keys_replaced["SILICONFLOW_API_KEY"] = True
@@ -1558,6 +1575,8 @@ def save_settings(
         # Append keys if not replaced
         if not keys_replaced["DEEPSEEK_API_KEY"]:
             new_lines.append(f"DEEPSEEK_API_KEY={deepseek_key}\n")
+        if not keys_replaced["DEEPSEEK_OCR_MODEL"]:
+            new_lines.append(f"DEEPSEEK_OCR_MODEL={deepseek_model}\n")
         if not keys_replaced["SILICONFLOW_API_KEY"]:
             new_lines.append(f"SILICONFLOW_API_KEY={siliconflow_key}\n")
         if not keys_replaced["ALI_BAILIAN_API_KEY"]:
@@ -1596,6 +1615,7 @@ def save_settings(
         os.environ.pop("PIX2TEXT_SERVER_TYPE", None)
         
         os.environ["DEEPSEEK_API_KEY"] = deepseek_key
+        os.environ["DEEPSEEK_OCR_MODEL"] = deepseek_model
         os.environ["SILICONFLOW_API_KEY"] = siliconflow_key
         os.environ["ALI_BAILIAN_API_KEY"] = ali_bailian_key
         os.environ["ZHONGZHAN_GPT_API_KEY"] = zhongzhan_gpt_key
@@ -3782,7 +3802,7 @@ def ai_classify(content: str = Form(...)):
         os.getenv("PREFER_CLASSIFY_MODEL") 
         or os.getenv("DEEPSEEK_CLASSIFY_MODEL") 
         or os.getenv("PREFER_PARSE_MODEL") 
-        or "deepseek-v4-flash"
+        or "deepseek-flash"
     )
     
     provider = resolve_text_provider(classify_model)
@@ -3963,7 +3983,7 @@ def parse_paper_text_internal(
     generate_answers_bool: bool
 ) -> list:
     """内部通用函数：调用选定的 LLM 接口，将 LaTeX 试卷内容解析拆分为结构化 JSON 卡片"""
-    parse_model = os.getenv("PREFER_PARSE_MODEL") or os.getenv("DEEPSEEK_PARSE_MODEL", "deepseek-v4-flash")
+    parse_model = os.getenv("PREFER_PARSE_MODEL") or os.getenv("DEEPSEEK_PARSE_MODEL", "deepseek-flash")
     provider = resolve_text_provider(parse_model)
     api_key = provider.api_key
     api_base = provider.api_base
@@ -4057,7 +4077,7 @@ def ai_parse_paper(
     generate_answers: str = Form("false")
 ):
     generate_answers_bool = generate_answers.lower() in ("true", "1", "yes")
-    parse_model = os.getenv("PREFER_PARSE_MODEL") or os.getenv("DEEPSEEK_PARSE_MODEL", "deepseek-v4-flash")
+    parse_model = os.getenv("PREFER_PARSE_MODEL") or os.getenv("DEEPSEEK_PARSE_MODEL", "deepseek-flash")
     provider = resolve_text_provider(parse_model)
     api_key = provider.api_key
     api_base = provider.api_base
@@ -4640,7 +4660,7 @@ def ocr_pdf_page_image(image_path: str) -> str:
     providers_to_try = resolve_ocr_fallbacks(prefer_engine)
 
     if not providers_to_try:
-        raise ValueError("未配置任何识图 Key，请在右上角「API设置」面板中配置 硅基流动、阿里百炼 或 中转站 API 密钥。")
+        raise ValueError("未配置任何识图 Key，请在系统设置中配置所选识图平台的 DeepSeek、硅基流动、阿里百炼或中转站 API 密钥。")
 
     for ocr_provider in providers_to_try:
         label = ocr_provider.provider_label
@@ -4781,7 +4801,7 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
         target_model = (
             os.getenv("PREFER_SOLVE_MODEL")
             or os.getenv("PREFER_PARSE_MODEL")
-            or "deepseek-chat"
+            or "deepseek-flash"
         )
         provider = resolve_text_provider(target_model)
         api_key = provider.api_key
@@ -4931,8 +4951,10 @@ def ai_select_paper(payload: dict, db: Session = Depends(get_db)):
 
 
 def post_process_pdf_parsed_questions(parsed_questions: list, paper_title: str, task_id: str = None, ocr_results: list = None) -> list:
-    """PDF 专属解析卡片后处理：正则搜寻 /tmp/ 下的图片，以及将未解析的图n占位符智能映射回真实的裁剪插图图片，
-    最后将其灌入 image_paths 数组中，并在 content 中静默清除以配合布局展示。支持文本重合度兜底映射，防大模型删除路径！"""
+    """PDF/Word 解析卡片后处理：修复图片路径并登记资产，保留正文中的图片锚点。
+
+    image_paths 负责资产生命周期，不能替代选项、表格或正文中的图片位置。
+    """
     import re
     import os
     import glob
@@ -5008,11 +5030,11 @@ def post_process_pdf_parsed_questions(parsed_questions: list, paper_title: str, 
                         q[field] = re.sub(latex_img_pattern, f'![插图]({real_url})', q[field])
 
         # 寻找本题正文中夹带的所有临时图片 URL (注意：UUID 中含有 -，所以 regex 必须支持 [a-zA-Z0-9_-]+)
-        found_crops = set()
+        found_crops = {}
         for field in ["content", "answer_markdown"]:
             if field in q and isinstance(q[field], str):
                 for match in re.finditer(r'/static/(?:uploads|test_uploads)/tmp/[a-zA-Z0-9_.-]+', q[field]):
-                    found_crops.add(match.group(0))
+                    found_crops[match.group(0)] = None
                     
         # 顺带检查 referenced_images 属性并应用修复映射
         ref_imgs = q.get("referenced_images", [])
@@ -5020,9 +5042,9 @@ def post_process_pdf_parsed_questions(parsed_questions: list, paper_title: str, 
             mapped_ref = mapping.get(ref, ref)
             if "/tmp/" in mapped_ref:
                 filename = os.path.basename(mapped_ref)
-                found_crops.add(f"/{UPLOAD_DIR_REL}/tmp/{filename}")
+                found_crops[f"/{UPLOAD_DIR_REL}/tmp/{filename}"] = None
                 
-        # 灌入 image_paths 作为独立配图卡片关联
+        # 按正文、解答、补充引用的首次出现顺序登记，不能用无序集合打乱图片。
         q["image_paths"] = list(found_crops)
 
     # 5. 极致兜底机制：如果大模型在拆题时完全删除了图片占位标记或路径，导致最终题目关联的图片为空，
@@ -5032,7 +5054,7 @@ def post_process_pdf_parsed_questions(parsed_questions: list, paper_title: str, 
         for p_idx, page_text in enumerate(ocr_results):
             # 获取当前页生成的所有 pdf_crop_ 临时文件 URL
             urls_on_page = re.findall(r'/static/uploads(?:_test|/test_uploads|/uploads)?/tmp/pdf_crop_[a-zA-Z0-9_-]+\.png', page_text or "")
-            page_crops[p_idx] = list(set(urls_on_page))
+            page_crops[p_idx] = list(dict.fromkeys(urls_on_page))
             
         print(f"[PDF PostProcess Failsafe] 每页识别到的插图关系: {page_crops}")
         
@@ -5044,14 +5066,9 @@ def post_process_pdf_parsed_questions(parsed_questions: list, paper_title: str, 
                     q["image_paths"] = crops
                     print(f"[PDF PostProcess Failsafe] 成功通过重合度，将第 {p_source + 1} 页的插图 {crops} 兜底分配给题目: {q.get('content')[:40]}...")
 
-    # 6. 从 content 题干中静默移除已经绑定至 image_paths 内部的占位图片语法，以避免重叠渲染
-    for q in parsed_questions:
-        found_crops = q.get("image_paths", [])
-        if "content" in q and isinstance(q["content"], str):
-            for crop_url in found_crops:
-                q["content"] = re.sub(r'!\[.*?\]\(' + re.escape(crop_url) + r'\)', '', q["content"])
-            q["content"] = q["content"].strip()
-            
+    # Keep image markup in place. The preview already skips thumbnails for images
+    # rendered in Markdown; stripping markup here empties image-only choices and
+    # destroys the relationship between an option label and its graph.
     return parsed_questions
 
 
@@ -6029,7 +6046,7 @@ def explain_latex_compile_error(log_text: str, tex_content: str) -> dict:
     """Explain one compile failure locally, then enrich it with the parse model."""
     diagnostic = build_local_latex_diagnostic(log_text, tex_content)
     parse_model = os.getenv("PREFER_PARSE_MODEL") or os.getenv(
-        "DEEPSEEK_PARSE_MODEL", "deepseek-v4-flash"
+        "DEEPSEEK_PARSE_MODEL", "deepseek-flash"
     )
     provider = resolve_text_provider(parse_model)
     if not provider.api_key:

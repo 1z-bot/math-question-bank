@@ -79,6 +79,57 @@ def test_mixed_latex_preserves_order_and_independent_size(paper_type):
     assert tex.count('{a.png}') == tex.count('{b.png}') == 1
 
 
+def _four_image_options():
+    return r'选择正确图象。\begin{choices}' + ''.join(
+        rf'\item ![](/static/uploads/option_{label}.png)' for label in 'ABCD'
+    ) + r'\end{choices}'
+
+
+@pytest.mark.parametrize('paper_type', ['exam', 'quiz', 'exam_19'])
+def test_latex_four_image_options_are_compact_and_ordered(paper_type):
+    q = dict(id=6, question_type='single_choice', content=_four_image_options(), image_paths=[])
+    tex = build_latex_document('四图选项', '', paper_type, [{'question': q, 'score': 5}],
+                               show_secret=False, show_notice=False)
+    assert r'\begin{choices}[columns=4,label-pos=left]' in tex
+    assert tex.count('max width=3.0cm,max height=3.0cm') == 4
+    positions = [tex.index('{option_' + label + '.png}') for label in 'ABCD']
+    assert positions == sorted(positions)
+
+
+@pytest.mark.parametrize('content', [
+    _four_image_options().replace(r'\item ![]', r'\item 图像说明 ![]', 1),
+    _four_image_options().replace(r'\begin{choices}', r'\begin{choices}[columns=4,label-pos=left]'),
+    _four_image_options().replace(r'\item ![](/static/uploads/option_D.png)', r'\item $1$'),
+])
+def test_compact_image_options_do_not_override_mixed_or_authored_layouts(content):
+    from mathbank.paper_helper import clean_content_for_latex
+    tex = clean_content_for_latex(content, q_type='single_choice', preserve_image_positions=True)
+    assert 'max width=3.0cm,max height=3.0cm' not in tex
+
+
+@pytest.mark.skipif(os.environ.get('MATHBANK_TEST_TIKZ_NATIVE') != '1', reason='opt-in XeLaTeX')
+@pytest.mark.parametrize('paper_type', ['exam', 'quiz', 'exam_19'])
+def test_native_pdf_four_image_options_share_one_row(tmp_path, paper_type):
+    import pymupdf as fitz
+    paths = []
+    for label, color in zip('ABCD', ['red', 'green', 'blue', 'black']):
+        path = tmp_path / f'option_{label}.png'
+        Image.new('RGB', (400, 300), color).save(path)
+        paths.append(str(path))
+    q = dict(id=6, question_type='single_choice', content=_four_image_options(), image_paths=[])
+    tex = build_latex_document('四图选项', '', paper_type, [{'question': q, 'score': 5}],
+                               show_secret=False, show_notice=False)
+    pdf, diagnostics = compile_tex_to_pdf(tex, paths)
+    assert pdf, diagnostics
+    with fitz.open(stream=pdf, filetype='pdf') as document:
+        images = [image for page in document for image in page.get_image_info()]
+        assert len(images) == 4
+        boxes = [image['bbox'] for image in images]
+        assert max(box[1] for box in boxes) - min(box[1] for box in boxes) < 1
+        assert [box[0] for box in boxes] == sorted(box[0] for box in boxes)
+        assert all(box[2] - box[0] <= 3 * 72 / 2.54 + 1 for box in boxes)
+
+
 def test_mixed_word_keeps_positions_and_individual_alignment(tmp_path):
     for name in ('a.png','b.png'):
         Image.new('RGB',(600,300),'white').save(tmp_path/name)
@@ -204,7 +255,7 @@ console.log(JSON.stringify({{
         if 'tabular' in anchored_content:
             assert len(tree.xpath('.//td//img')) == 1, name
         if 'choices' in anchored_content:
-            assert len(tree.xpath('.//span[contains(@class,"choices-content")]//img')) == 1, name
+            assert len(tree.xpath('.//*[contains(@class,"choices-content")]//img')) == 1, name
 
     embedded = rendered['embedded']
     assert 'a_1.png' in embedded['stemHtml'] and 'b_2.png' not in embedded['stemHtml']

@@ -90,6 +90,9 @@
                 window.invalidatePendingQuestionDetailLoad();
             }
             EditorState.reset();
+            if (typeof window.setQuestionDetailEditAvailability === 'function') {
+                window.setQuestionDetailEditAvailability(false);
+            }
             document.getElementById('editorTitle').textContent = '录入新数学题';
             
             document.getElementById('editContent').value = '';
@@ -225,6 +228,9 @@
                 window.invalidatePendingQuestionDetailLoad();
             }
             EditorState.reset();
+            if (typeof window.setQuestionDetailEditAvailability === 'function') {
+                window.setQuestionDetailEditAvailability(false);
+            }
             document.getElementById('editorTitle').textContent = '录入新数学题';
 
             document.getElementById('editContent').value = '';
@@ -567,6 +573,7 @@
             } else {
                 button.innerHTML = '<i class="fa-solid fa-floppy-disk"></i><span>保存</span>';
             }
+            if (typeof refreshEditorFeedback === 'function') refreshEditorFeedback();
         }
 
         function invalidatePendingQuestionDetailLoad() {
@@ -578,7 +585,8 @@
 
         // Select a question to Edit & Preview. The editor identity is committed
         // only after the requested detail payload has arrived successfully.
-        function selectQuestion(item) {
+        function selectQuestion(item, options = {}) {
+            const silent = options && options.silent === true;
             if (blockEditorSessionChangeWhileSaving()) {
                 return;
             }
@@ -595,6 +603,9 @@
             const figureLayoutPendingAtRequest = typeof window.hasPendingFigureLayoutWrite === 'function'
                 && window.hasPendingFigureLayoutWrite(requestedQuestionId);
             questionDetailLoading = true;
+            if (typeof window.setQuestionDetailEditAvailability === 'function') {
+                window.setQuestionDetailEditAvailability(false);
+            }
             updateQuestionSaveButtonState();
 
             // Lazy-load details asynchronously
@@ -679,8 +690,8 @@
                     }
                     
                     // Cascade bindings
-                    document.getElementById('editQType').value = fullItem.question_type;
-                    document.getElementById('editDifficulty').value = fullItem.difficulty;
+                    setEditorMetadataValue(document.getElementById('editQType'), fullItem.question_type);
+                    setEditorMetadataValue(document.getElementById('editDifficulty'), fullItem.difficulty);
                     if (document.getElementById('editTags')) {
                         document.getElementById('editTags').value = fullItem.tags || '';
                     }
@@ -728,15 +739,24 @@
                     document.getElementById('editorSection').scrollTop = 0;
                     
                     // Scroll to card active or highlight in current view
-                    showToast(`题目 #${fullItem.seq_num} 载入成功`);
+                    if (!silent) {
+                        if (typeof window.showBankDetail === 'function') window.showBankDetail();
+                        showToast(`题目 #${fullItem.seq_num} 载入成功`);
+                    }
          
                     // Backup the original loaded question state directly from the DOM!
                     backupEditorState(fullItem.id, null);
+                    if (typeof window.setQuestionDetailEditAvailability === 'function') {
+                        window.setQuestionDetailEditAvailability(true);
+                    }
                 })
                 .catch(err => {
                     if (loadSequence !== questionDetailLoadSequence) return;
                     console.error('Failed to load full question details:', err);
                     showToast('获取题目详情失败: ' + err.message, 'error');
+                    if (typeof window.setQuestionDetailEditAvailability === 'function') {
+                        window.setQuestionDetailEditAvailability(false);
+                    }
                 })
                 .finally(() => {
                     if (loadSequence !== questionDetailLoadSequence) return;
@@ -801,7 +821,12 @@
                 const tags = rawTags.trim();
                 const figureLayout = FigureLayoutState.snapshot();
                 
+                const editorModal = document.getElementById('editorSection');
+                if (editorModal) editorModal.dataset.validationAttempted = 'true';
+                if (typeof refreshEditorFeedback === 'function') refreshEditorFeedback();
                 if (!content.trim()) {
+                    if (typeof switchQuestionEditorPanel === 'function') switchQuestionEditorPanel('content');
+                    document.getElementById('editContent').focus();
                     showToast('保存失败：题干内容不能为空！', 'error');
                     return false;
                 }
@@ -810,6 +835,7 @@
                 if (!skipCheck && (!compulsory || !chapter)) {
                     const choice = await showMissingCompulsoryModal();
                     if (choice === 'manual') {
+                        if (typeof switchQuestionEditorPanel === 'function') switchQuestionEditorPanel('classification');
                         if (!compulsory) {
                             const compSelect = document.getElementById('editCompulsory');
                             if (compSelect) {
@@ -1034,6 +1060,14 @@
                         }
                         if (editorSessionStillCurrent) {
                             refreshRelatedDropdown(relatedQuestionId, { expectedValue: relatedQuestionId });
+                            if (typeof window.setQuestionDetailEditAvailability === 'function') {
+                                window.setQuestionDetailEditAvailability(true);
+                            }
+                            const editorDialog = document.getElementById('editorSection');
+                            if (editorDialog) {
+                                delete editorDialog.dataset.newQuestionMode;
+                                delete editorDialog.dataset.returnQuestionId;
+                            }
                         }
                         return true;
                     } else {
@@ -1334,20 +1368,25 @@
             return true;
         }
 
+
+        function updateImportSourceView(kind) {
+            const details = document.getElementById('importSourceDetails');
+            const summary = document.getElementById('importFileSummary');
+            const images = document.getElementById('texImagesSection');
+            if (!details || !summary || !images) return;
+            const binary = kind === 'pdf' || kind === 'docx';
+            details.hidden = binary;
+            details.open = kind === 'tex';
+            images.hidden = kind !== 'tex';
+            summary.classList.toggle('hidden', !binary);
+            summary.textContent = binary ? (kind === 'pdf' ? 'PDF 已选择。请设置页码范围与识别策略，然后开始解析。' : 'Word 已选择。将提取正文、公式和插图，结果可逐题校对。') : '';
+        }
+
+
         function openImportModal() {
-            const modal = document.getElementById('latexImportModal');
-            modal.classList.remove('hidden');
-            window.MathBankModal.open(modal, {
-                onEscape: () => {
-                    if (window.currentPdfTaskId) cancelCurrentImportTask();
-                    else closeImportModal();
-                }
-            });
-            setTimeout(() => {
-                modal.classList.remove('opacity-0');
-                modal.querySelector('div').classList.remove('scale-95');
-                modal.querySelector('div').classList.add('scale-100');
-            }, 50);
+            if (typeof window.selectWorkspace === 'function') {
+                window.selectWorkspace('import', '导入中心');
+            }
         }
 
         function closeImportModal() {
@@ -1357,15 +1396,26 @@
             if (typeof performOrphanedTempCropsCleanup === 'function') {
                 performOrphanedTempCropsCleanup();
             }
-            const modal = document.getElementById('latexImportModal');
-            window.MathBankModal.close(modal);
-            modal.classList.add('opacity-0');
-            modal.querySelector('div').classList.remove('scale-100');
-            modal.querySelector('div').classList.add('scale-95');
-            setTimeout(() => {
-                modal.classList.add('hidden');
-            }, 300);
+            const workspace = document.getElementById('importWorkspaceSection');
+            const returnNavTarget = workspace && workspace.dataset.returnNavTarget
+                ? workspace.dataset.returnNavTarget
+                : 'bank';
+            if (workspace) delete workspace.dataset.returnNavTarget;
+            if (typeof window.selectWorkspace === 'function') {
+                const workspaceName = returnNavTarget === 'paper'
+                    ? '智能组卷'
+                    : (returnNavTarget === 'dashboard' ? '工作台' : '题库管理');
+                window.selectWorkspace(returnNavTarget, workspaceName);
+            }
         }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const details = document.getElementById('importSourceDetails');
+            if (details) details.addEventListener('toggle', () => {
+                const images = document.getElementById('texImagesSection');
+                if (images && !window.currentPdfFile && !window.currentDocxFile) images.hidden = !details.open;
+            });
+        });
 
         // PDF & Crop Global States
         window.currentPdfFile = null;
@@ -1866,6 +1916,7 @@
                     texInput.value = '';
                     return;
                 }
+                updateImportSourceView(lowerFileName.endsWith('.pdf') ? 'pdf' : lowerFileName.endsWith('.docx') ? 'docx' : 'tex');
                 window.currentTexReadToken = null;
                 const texImagesSection = document.getElementById('texImagesSection');
                 
@@ -1892,7 +1943,7 @@
                     texFileName.textContent = file.name;
                     texFileName.className = "text-xs text-brand-600 font-bold";
                     texFileIcon.className = "fa-solid fa-file-pdf text-brand-500 text-xl mb-1.5 animate-bounce";
-                    latexTextarea.value = `[PDF 试卷已成功载入: ${file.name}]\n总页数、高清转换与插图定位将会在点击“一键 AI 智能拆解并关联”后于后台异步执行。`;
+                    latexTextarea.value = `[PDF 试卷已成功载入: ${file.name}]\n总页数、高清转换与插图定位将会在点击“开始解析”后于后台异步执行。`;
                     latexTextarea.disabled = true;
                     
                     const titleInput = document.getElementById('importPaperTitle');
@@ -1991,7 +2042,7 @@
                     .finally(() => {
                         if (runBtn) {
                             runBtn.disabled = false;
-                            runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i><span>一键 AI 智能拆解并关联</span>';
+                            runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i><span>开始解析</span>';
                         }
                     });
                 }
@@ -2200,7 +2251,7 @@
                     }
                     resetBtn.classList.remove('hidden');
                     runBtn.disabled = false;
-                    runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>一键 AI 智能拆解并关联</span>';
+                    runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>开始解析</span>';
                 });
                 return;
             }
@@ -2275,7 +2326,7 @@
                     }
                     resetBtn.classList.remove('hidden');
                     runBtn.disabled = false;
-                    runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>一键 AI 智能拆解并关联</span>';
+                    runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>开始解析</span>';
                 });
                 return;
             }
@@ -2407,7 +2458,7 @@
                 .finally(() => {
                     if (!isCurrentDocumentImportTask(importTaskGeneration)) return;
                     runBtn.disabled = false;
-                    runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>一键 AI 智能拆解并关联</span>';
+                    runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>开始解析</span>';
                 });
         }
 
@@ -2465,7 +2516,7 @@
             const runBtn = document.getElementById('runParseBtn');
             if (runBtn) {
                 runBtn.disabled = false;
-                runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>一键 AI 智能拆解并关联</span>';
+                runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>开始解析</span>';
             }
             
             if (typeof showToast === 'function') {
@@ -2572,12 +2623,12 @@
                         }
 
                         runBtn.disabled = false;
-                        runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>一键 AI 智能拆解并关联</span>';
+                        runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>开始解析</span>';
                     } else if (task.status === 'cancelled') {
                         if (!finishDocumentPoll(identity)) return;
                         document.getElementById('importLoadingState').classList.add('hidden');
                         runBtn.disabled = false;
-                        runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>一键 AI 智能拆解并关联</span>';
+                        runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>开始解析</span>';
                     } else if (task.status === 'error') {
                         if (!finishDocumentPoll(identity)) return;
                         appendImportLog(`分析失败: ${task.error || '未知错误'}`, 'error');
@@ -2603,7 +2654,7 @@
                         resetBtn.classList.remove('hidden');
                         
                         runBtn.disabled = false;
-                        runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>一键 AI 智能拆解并关联</span>';
+                        runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>开始解析</span>';
                         showToast(`${documentLabel} 拆解分析失败: ${task.error || '未知错误'}`, 'error');
                     }
                 })
@@ -2663,6 +2714,7 @@
             if (blockImportResetWhileSaving()) {
                 return false;
             }
+            updateImportSourceView('empty');
             // 清空左侧输入栏
             const titleInput = document.getElementById('importPaperTitle');
             if (titleInput) titleInput.value = '';
@@ -2747,7 +2799,7 @@
             // 重置按钮状态
             const runBtn = document.getElementById('runParseBtn');
             runBtn.disabled = false;
-            runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>一键 AI 智能拆解并关联</span>';
+            runBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>开始解析</span>';
 
             // 清空解析结果数据
             replaceParsedQuestions([]);
@@ -3917,6 +3969,9 @@
                     }
                     
                     contentPrev.innerHTML = window.MathBankSafe.sanitizeRichHtml(html);
+                    contentPrev.parentElement.classList.toggle(
+                        'card-image-options-preview', !!contentPrev.querySelector('.choices-has-images')
+                    );
                     renderMathInElement(contentPrev, {
                         delimiters: [
                             {left: '$$', right: '$$', display: true},

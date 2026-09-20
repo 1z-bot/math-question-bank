@@ -34,7 +34,7 @@
             keyword: '',
             tab: 'all' // 'all' or 'selected'
         },
-        isFilterCollapsed: false,
+        isFilterCollapsed: true,
         bankQuestions: [], // Current server-paginated question bank page
         streamPagination: {
             all: { page: 1, total: null, totalPages: 1, loading: false, error: '', retryPage: 1 },
@@ -52,7 +52,7 @@
         expandedAnswerIds: new Set(),
         answerLoadingIds: new Set(),
         answerErrors: Object.create(null),
-        activeWorkspace: 'bank'
+        activeWorkspace: 'dashboard'
     };
 
     // Load State from LocalStorage
@@ -74,7 +74,7 @@
         } catch (e) { }
 
         try {
-            window.PaperStore.isFilterCollapsed = localStorage.getItem(STORAGE_KEY_COLLAPSED) === 'true';
+            window.PaperStore.isFilterCollapsed = localStorage.getItem(STORAGE_KEY_COLLAPSED) !== 'false';
         } catch (e) { }
     }
 
@@ -144,18 +144,22 @@
 
     async function loadPaperQuestionAnswer(qid) {
         qid = parseInt(qid, 10);
-        if (!qid || window.PaperStore.answerLoadingIds.has(qid)) return;
+        if (!qid) return;
+        if (window.PaperStore.answerLoadingIds.has(qid)) {
+            updatePaperQuestionAnswer(qid);
+            return;
+        }
 
         const q = window.PaperStore.questionsMap[qid];
         if (q) seedPaperAnswerCache(q);
         if (hasCachedPaperAnswer(qid)) {
-            renderPart3QuestionStream();
+            updatePaperQuestionAnswer(qid);
             return;
         }
 
         window.PaperStore.answerLoadingIds.add(qid);
         delete window.PaperStore.answerErrors[qid];
-        renderPart3QuestionStream();
+        updatePaperQuestionAnswer(qid);
 
         try {
             const response = await fetch(`/api/questions/${qid}`);
@@ -174,7 +178,7 @@
             window.PaperStore.answerErrors[qid] = '答案加载失败，请重试。';
         } finally {
             window.PaperStore.answerLoadingIds.delete(qid);
-            renderPart3QuestionStream();
+            updatePaperQuestionAnswer(qid);
         }
     }
 
@@ -183,7 +187,7 @@
         if (!qid) return;
         if (window.PaperStore.expandedAnswerIds.has(qid)) {
             window.PaperStore.expandedAnswerIds.delete(qid);
-            renderPart3QuestionStream();
+            updatePaperQuestionAnswer(qid);
             return;
         }
 
@@ -200,8 +204,9 @@
     };
 
     window.collapseAllPaperAnswers = function () {
+        const expandedIds = Array.from(window.PaperStore.expandedAnswerIds);
         window.PaperStore.expandedAnswerIds.clear();
-        renderPart3QuestionStream();
+        expandedIds.forEach(updatePaperQuestionAnswer);
     };
 
     // Public Cart Helper Functions
@@ -269,7 +274,9 @@
         const count = window.PaperStore.cart.length;
         const badges = document.querySelectorAll('.paper-cart-badge');
         badges.forEach(b => {
-            b.textContent = count;
+            b.textContent = `${count}题`;
+            b.setAttribute('aria-label', `当前试卷已选 ${count} 道题`);
+            b.setAttribute('data-tooltip', `当前正在编排的试卷已选 ${count} 道题`);
             if (count > 0) {
                 b.classList.remove('hidden');
             } else {
@@ -278,14 +285,128 @@
         });
     }
 
+    window.setPaperMobilePane = function (pane) {
+        const target = pane === 'preview' ? 'preview' : 'questions';
+        document.querySelector('.paper-studio-body').dataset.mobilePane = target;
+        document.querySelectorAll('[data-paper-pane]').forEach(button => button.setAttribute('aria-selected', String(button.dataset.paperPane === target)));
+        window.dispatchEvent(new Event('resize'));
+    };
+
+    function initPaperSplitResizer() {
+        const workspaceBody = document.querySelector('.paper-studio-body');
+        const library = document.querySelector('.paper-library-column');
+        const preview = document.querySelector('.paper-preview-column');
+        const resizer = document.getElementById('paperSplitResizer');
+        if (!workspaceBody || !library || !preview || !resizer) return;
+
+        const minRatio = Number(resizer.getAttribute('aria-valuemin')) || 36;
+        const maxRatio = Number(resizer.getAttribute('aria-valuemax')) || 66;
+        const defaultRatio = 45;
+        let isDragging = false;
+
+        function setPaperSplitRatio(value, { notify = false } = {}) {
+            const ratio = Math.min(maxRatio, Math.max(minRatio, Number(value) || defaultRatio));
+            workspaceBody.style.setProperty('--paper-library-track', `${ratio}fr`);
+            workspaceBody.style.setProperty('--paper-preview-track', `${100 - ratio}fr`);
+            resizer.setAttribute('aria-valuenow', String(Math.round(ratio)));
+            if (notify) window.dispatchEvent(new Event('resize'));
+            return ratio;
+        }
+
+        function ratioFromPointer(clientX) {
+            const libraryRect = library.getBoundingClientRect();
+            const previewRect = preview.getBoundingClientRect();
+            const dividerWidth = resizer.getBoundingClientRect().width;
+            const availableWidth = Math.max(1, previewRect.right - libraryRect.left - dividerWidth);
+            const desiredLibraryWidth = clientX - libraryRect.left - dividerWidth / 2;
+            return desiredLibraryWidth / availableWidth * 100;
+        }
+
+        function finishDragging(event) {
+            if (!isDragging) return;
+            isDragging = false;
+            resizer.classList.remove('is-dragging');
+            document.body.style.cursor = '';
+            document.body.classList.remove('select-none');
+            if (event && resizer.hasPointerCapture && resizer.hasPointerCapture(event.pointerId)) {
+                resizer.releasePointerCapture(event.pointerId);
+            }
+            window.dispatchEvent(new Event('resize'));
+        }
+
+        resizer.addEventListener('pointerdown', event => {
+            if (window.matchMedia('(max-width: 960px)').matches) return;
+            event.preventDefault();
+            isDragging = true;
+            resizer.classList.add('is-dragging');
+            document.body.style.cursor = 'col-resize';
+            document.body.classList.add('select-none');
+            if (resizer.setPointerCapture) resizer.setPointerCapture(event.pointerId);
+            setPaperSplitRatio(ratioFromPointer(event.clientX));
+        });
+
+        resizer.addEventListener('pointermove', event => {
+            if (!isDragging) return;
+            event.preventDefault();
+            setPaperSplitRatio(ratioFromPointer(event.clientX));
+        });
+
+        resizer.addEventListener('pointerup', finishDragging);
+        resizer.addEventListener('pointercancel', finishDragging);
+
+        resizer.addEventListener('keydown', event => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key)) return;
+            event.preventDefault();
+            const currentRatio = Number(resizer.getAttribute('aria-valuenow')) || defaultRatio;
+            const nextRatio = event.key === 'Home'
+                ? defaultRatio
+                : currentRatio + (event.key === 'ArrowLeft' ? -2 : 2);
+            setPaperSplitRatio(nextRatio, { notify: true });
+        });
+
+        resizer.addEventListener('dblclick', () => {
+            setPaperSplitRatio(defaultRatio, { notify: true });
+        });
+
+        setPaperSplitRatio(defaultRatio);
+        window.setPaperSplitRatio = setPaperSplitRatio;
+    }
+
+    // Import is authored after the app shell so its large markup stays isolated,
+    // then mounted beside the bank and paper sections as a peer workspace.
+    const mainWorkspaceContainer = document.querySelector('#appContentShell > main');
+    const importWorkspaceSection = document.getElementById('importWorkspaceSection');
+    const paperWorkspaceSection = document.getElementById('paperWorkspaceSection');
+    if (
+        mainWorkspaceContainer
+        && importWorkspaceSection
+        && paperWorkspaceSection
+        && importWorkspaceSection.parentElement !== mainWorkspaceContainer
+    ) {
+        mainWorkspaceContainer.insertBefore(importWorkspaceSection, paperWorkspaceSection);
+    }
+
     // Workspace View Switcher
     const originalSelectWorkspace = window.selectWorkspace;
     window.selectWorkspace = function (workspaceId, workspaceName) {
+        // The initial flash-prevention class keeps the first workspace visible
+        // during page boot.  Once the user makes an explicit workspace choice,
+        // remove it so its !important rules cannot mask the target workspace.
+        document.documentElement.classList.remove('init-ws-dashboard', 'init-ws-paper');
+        const previousWorkspace = window.PaperStore.activeWorkspace || 'dashboard';
         if (typeof originalSelectWorkspace === 'function') {
             originalSelectWorkspace(workspaceId, workspaceName);
         }
 
+        const importSec = document.getElementById('importWorkspaceSection');
+        const recordsSec = document.getElementById('recordsWorkspaceSection');
+        const dashboardSec = document.getElementById('dashboardWorkspaceSection');
+        if (workspaceId === 'import' && previousWorkspace !== 'import' && importSec) {
+            importSec.dataset.returnNavTarget = previousWorkspace;
+        }
+
         window.PaperStore.activeWorkspace = workspaceId;
+        document.body.dataset.workspace = workspaceId;
         try {
             localStorage.setItem('mathbank_active_workspace', workspaceId);
             if (window.__serverInstanceId) {
@@ -295,56 +416,67 @@
 
         const bankSec = document.getElementById('bankWorkspaceSection');
         const paperSec = document.getElementById('paperWorkspaceSection');
-        const toggleSidebarBtn = document.getElementById('toggleSidebarBtn');
 
-        if (workspaceId === 'paper') {
-            if (bankSec) bankSec.classList.add('hidden');
-            if (toggleSidebarBtn) toggleSidebarBtn.classList.add('hidden');
+        if (dashboardSec) dashboardSec.classList.add('hidden');
+        if (bankSec) bankSec.classList.add('hidden');
+        if (paperSec) paperSec.classList.add('hidden');
+        if (importSec) importSec.classList.add('hidden');
+        if (recordsSec) recordsSec.classList.add('hidden');
+
+        if (workspaceId === 'dashboard') {
+            if (dashboardSec) {
+                dashboardSec.classList.remove('hidden');
+                if (typeof window.loadDashboardData === 'function') {
+                    window.loadDashboardData();
+                }
+            }
+        } else if (workspaceId === 'paper') {
             if (paperSec) {
                 paperSec.classList.remove('hidden');
                 window.renderPaperWorkspace();
             }
+        } else if (workspaceId === 'import') {
+            if (importSec) importSec.classList.remove('hidden');
+        } else if (workspaceId === 'records') {
+            if (recordsSec) recordsSec.classList.remove('hidden');
         } else {
-            if (paperSec) paperSec.classList.add('hidden');
-            if (toggleSidebarBtn) toggleSidebarBtn.classList.remove('hidden');
+            if (typeof window.closeBankDetail === 'function') window.closeBankDetail();
             if (bankSec) bankSec.classList.remove('hidden');
         }
     };
 
     // Toggle Part 2 Filter Bar Collapsing
+    function refreshPaperFilterSummary() {
+        const count = ['compulsory', 'chapter', 'knowledge', 'question_type', 'difficulty'].filter(key => window.PaperStore.filters[key]).length;
+        const label = document.getElementById('paperFilterToggleTxt');
+        const button = document.getElementById('togglePaperFilterBtn');
+        if (label) label.textContent = count ? `筛选 (${count})` : '筛选';
+        if (button) button.setAttribute('aria-expanded', String(!window.PaperStore.isFilterCollapsed));
+    }
     window.togglePaperFilterBar = function () {
         window.PaperStore.isFilterCollapsed = !window.PaperStore.isFilterCollapsed;
-        try {
-            localStorage.setItem(STORAGE_KEY_COLLAPSED, window.PaperStore.isFilterCollapsed ? 'true' : 'false');
-        } catch (e) { }
-
-        const filterBox = document.getElementById('paperFilterSection');
-        const toggleIcon = document.getElementById('paperFilterToggleIcon');
-        const toggleTxt = document.getElementById('paperFilterToggleTxt');
-
-        if (!filterBox) return;
-
-        if (window.PaperStore.isFilterCollapsed) {
-            filterBox.style.maxHeight = '0px';
-            filterBox.style.opacity = '0';
-            filterBox.style.overflow = 'hidden';
-            filterBox.style.paddingTop = '0px';
-            filterBox.style.paddingBottom = '0px';
-            filterBox.style.marginTop = '0px';
-            filterBox.style.marginBottom = '0px';
-            if (toggleIcon) toggleIcon.className = 'fa-solid fa-chevron-down text-xs';
-            if (toggleTxt) toggleTxt.textContent = '展开组卷配置栏';
-        } else {
-            filterBox.style.maxHeight = '700px';
-            filterBox.style.opacity = '1';
-            filterBox.style.overflow = '';
-            filterBox.style.paddingTop = '';
-            filterBox.style.paddingBottom = '';
-            filterBox.style.marginTop = '';
-            filterBox.style.marginBottom = '';
-            if (toggleIcon) toggleIcon.className = 'fa-solid fa-chevron-up text-xs';
-            if (toggleTxt) toggleTxt.textContent = '收起组卷配置栏';
-        }
+        try { localStorage.setItem(STORAGE_KEY_COLLAPSED, String(window.PaperStore.isFilterCollapsed)); } catch (e) { }
+        const panel = document.getElementById('paperAdvancedFilters');
+        if (panel) panel.hidden = window.PaperStore.isFilterCollapsed;
+        refreshPaperFilterSummary();
+    };
+    window.togglePaperConfiguration = function (kind) {
+        const meta = kind === 'meta';
+        const panel = document.getElementById(meta ? 'paperMetaDetails' : 'paperAiDetails');
+        if (!panel) return;
+        window.syncPaperConfiguration(kind, panel.hidden);
+    };
+    window.syncPaperConfiguration = function (kind, open) {
+        const meta = kind === 'meta';
+        window.PaperStore[meta ? 'isMetaExpanded' : 'isAiExpanded'] = open;
+        const panel = document.getElementById(meta ? 'paperMetaDetails' : 'paperAiDetails');
+        if (panel) panel.hidden = !open;
+        document.getElementById(meta ? 'togglePaperMetaBtn' : 'togglePaperAiBtn')?.setAttribute('aria-expanded', String(open));
+    };
+    window.clearPaperFilters = function () {
+        Object.assign(window.PaperStore.filters, {compulsory:'', chapter:'', knowledge:'', question_type:'', difficulty:''});
+        renderPart2FilterSection();
+        window.onPaperFilterChange('keyword', window.PaperStore.filters.keyword);
     };
 
     // Move Question Order
@@ -785,99 +917,33 @@
         });
 
         container.innerHTML = `
-            <div class="space-y-2 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-3 rounded-2xl shadow-sm">
-                <!-- Top Row: Paper Metadata -->
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-0.5">主标题</label>
-                        <input type="text" id="paperMetaTitle" value="${escapeHtml(meta.title)}" 
-                            oninput="updatePaperMeta('title', this.value)" onchange="updatePaperMeta('title', this.value)"
-                            class="glass-input w-full px-2 py-1 text-xs rounded-lg" placeholder="如：2026年高中数学期末考试">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-0.5">副标题 / 备注</label>
-                        <input type="text" id="paperMetaSubtitle" value="${escapeHtml(meta.subtitle)}" 
-                            oninput="updatePaperMeta('subtitle', this.value)" onchange="updatePaperMeta('subtitle', this.value)"
-                            class="glass-input w-full px-2 py-1 text-xs rounded-lg" placeholder="可选副标题/说明...">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-0.5">试卷类型预设</label>
-                        <select id="paperMetaType" onchange="updatePaperMeta('paper_type', this.value)"
-                            class="glass-select w-full px-2 py-1 text-xs rounded-lg">
-                            <option value="exam_19" ${meta.paper_type === 'exam_19' ? 'selected' : ''}>19题高考卷 (含答题卡)</option>
-                            <option value="exam" ${meta.paper_type === 'exam' ? 'selected' : ''}>常规试卷</option>
-                            <option value="quiz" ${meta.paper_type === 'quiz' ? 'selected' : ''}>日常小练</option>
-                        </select>
-                    </div>
+            <div class="paper-controls-stack">
+                <div class="workspace-command-bar paper-command-bar">
+                    <label class="workspace-search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><input id="paperFilterKeyword" type="search" aria-label="搜索组卷题库" value="${escapeHtml(f.keyword)}" oninput="onPaperFilterChange('keyword', this.value)" placeholder="搜索题干、来源或标签..." class="glass-input"></label>
+                    <button type="button" id="togglePaperFilterBtn" class="glass-btn" onclick="togglePaperFilterBar()" aria-controls="paperAdvancedFilters" aria-expanded="${!window.PaperStore.isFilterCollapsed}"><i id="paperFilterToggleIcon" class="fa-solid fa-filter" aria-hidden="true"></i><span id="paperFilterToggleTxt">筛选</span></button>
+                    <button type="button" id="togglePaperMetaBtn" class="glass-btn" onclick="togglePaperConfiguration('meta')" aria-controls="paperMetaDetails" aria-expanded="${Boolean(window.PaperStore.isMetaExpanded)}">试卷信息</button>
+                    <button type="button" id="togglePaperAiBtn" class="glass-btn" onclick="togglePaperConfiguration('ai')" aria-controls="paperAiDetails" aria-expanded="${Boolean(window.PaperStore.isAiExpanded)}"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> AI 选题</button>
                 </div>
-
-                <!-- Middle Row 1: 3-Level Cascade Curriculum Dropdowns (学段 -> 章节 -> 小节/知识点) -->
-                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1.5 border-t border-slate-100 dark:border-slate-800/60">
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-0.5">学段</label>
-                        <select id="paperFilterCompulsory" onchange="onPaperFilterChange('compulsory', this.value)"
-                            class="glass-select w-full px-2 py-1 text-xs rounded-lg">
-                            ${bookOptions}
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-0.5">章节</label>
-                        <select id="paperFilterChapter" onchange="onPaperFilterChange('chapter', this.value)" ${isChapterDisabled ? 'disabled' : ''}
-                            class="glass-select w-full px-2 py-1 text-xs rounded-lg disabled:opacity-50">
-                            ${chapterOptions}
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-0.5">小节 / 知识点</label>
-                        <select id="paperFilterKnowledge" onchange="onPaperFilterChange('knowledge', this.value)" ${isKnowledgeDisabled ? 'disabled' : ''}
-                            class="glass-select w-full px-2 py-1 text-xs rounded-lg disabled:opacity-50">
-                            ${knowledgeOptions}
-                        </select>
-                    </div>
+                <div id="paperAdvancedFilters" class="workspace-filter-grid" ${window.PaperStore.isFilterCollapsed ? 'hidden' : ''}>
+                    <label>学段<select id="paperFilterCompulsory" class="glass-select" onchange="onPaperFilterChange('compulsory', this.value)">${bookOptions}</select></label>
+                    <label>章节<select id="paperFilterChapter" class="glass-select" onchange="onPaperFilterChange('chapter', this.value)" ${isChapterDisabled ? 'disabled' : ''}>${chapterOptions}</select></label>
+                    <label>小节<select id="paperFilterKnowledge" class="glass-select" onchange="onPaperFilterChange('knowledge', this.value)" ${isKnowledgeDisabled ? 'disabled' : ''}>${knowledgeOptions}</select></label>
+                    <label>题型<select id="paperFilterType" class="glass-select" onchange="onPaperFilterChange('question_type', this.value)">${qTypeOptions}</select></label>
+                    <label>难度<select id="paperFilterDifficulty" class="glass-select" onchange="onPaperFilterChange('difficulty', this.value)">${diffOptions}</select></label>
+                    <button type="button" class="glass-btn" onclick="clearPaperFilters()">清除筛选</button>
                 </div>
-
-                <!-- Middle Row 2: Question Type, Difficulty & Search Input -->
-                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-0.5">题型</label>
-                        <select id="paperFilterType" onchange="onPaperFilterChange('question_type', this.value)"
-                            class="glass-select w-full px-2 py-1 text-xs rounded-lg">
-                            ${qTypeOptions}
-                        </select>
+                <section id="paperMetaDetails" class="paper-configuration-panel paper-meta-details" aria-labelledby="togglePaperMetaBtn" ${window.PaperStore.isMetaExpanded ? '' : 'hidden'}>
+                    <div class="workspace-filter-grid">
+                        <label>主标题<input type="text" id="paperMetaTitle" value="${escapeHtml(meta.title)}" oninput="updatePaperMeta('title', this.value)" onchange="updatePaperMeta('title', this.value)" class="glass-input"></label>
+                        <label>副标题 / 备注<input type="text" id="paperMetaSubtitle" value="${escapeHtml(meta.subtitle)}" oninput="updatePaperMeta('subtitle', this.value)" onchange="updatePaperMeta('subtitle', this.value)" class="glass-input"></label>
+                        <label>试卷模板<select id="paperMetaType" onchange="updatePaperMeta('paper_type', this.value)" class="glass-select"><option value="exam_19" ${meta.paper_type === 'exam_19' ? 'selected' : ''}>19题高考卷（含答题卡）</option><option value="exam" ${meta.paper_type === 'exam' ? 'selected' : ''}>常规试卷</option><option value="quiz" ${meta.paper_type === 'quiz' ? 'selected' : ''}>日常小练</option></select></label>
                     </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-0.5">难度</label>
-                        <select id="paperFilterDifficulty" onchange="onPaperFilterChange('difficulty', this.value)"
-                            class="glass-select w-full px-2 py-1 text-xs rounded-lg">
-                            ${diffOptions}
-                        </select>
-                    </div>
-                    <div class="col-span-2">
-                        <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-0.5">来源 / 自定义标签 / 关键词</label>
-                        <div class="relative">
-                            <i class="fa-solid fa-magnifying-glass text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 text-xs"></i>
-                            <input type="text" id="paperFilterKeyword" value="${escapeHtml(f.keyword)}"
-                                oninput="onPaperFilterChange('keyword', this.value)"
-                                class="glass-input w-full pl-7 pr-2.5 py-1 text-xs rounded-lg" placeholder="搜索题干内容 / 来源 / 标签 / 批注...">
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Bottom Row: AI Prompt Selection Bar -->
-                <div class="pt-1.5 border-t border-slate-100 dark:border-slate-800/60 flex items-center space-x-2">
-                    <div class="relative flex-1">
-                        <i class="fa-solid fa-wand-magic-sparkles text-brand-500 absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px]"></i>
-                        <input type="text" id="paperAiPromptInput" 
-                            class="glass-input w-full pl-7 pr-2.5 py-1 text-[10px] rounded-lg border-brand-200/80"
-                            placeholder="智能一键抽卷：例如“帮我抽 5 道难度中等的函数选择题”"
-                            onkeypress="if(event.key==='Enter') triggerAiPaperSelect()">
-                    </div>
-                    <button onclick="triggerAiPaperSelect()" class="glass-btn-primary h-[28px] px-3 rounded-lg text-[10px] font-semibold flex items-center space-x-1 shrink-0">
-                        <span>智能抽取</span>
-                    </button>
-                </div>
-            </div>
-        `;
+                </section>
+                <section id="paperAiDetails" class="paper-configuration-panel paper-ai-details" aria-labelledby="togglePaperAiBtn" ${window.PaperStore.isAiExpanded ? '' : 'hidden'}>
+                    <div class="paper-ai-entry"><input type="text" id="paperAiPromptInput" aria-label="AI选题要求" value="${escapeHtml(window.PaperStore.aiSelectionPrompt || '')}" oninput="window.PaperStore.aiSelectionPrompt = this.value" onkeypress="if(event.key==='Enter') triggerAiPaperSelect()" class="glass-input" placeholder="例如：抽取5道函数选择题，包含基础题与挑战题"><button type="button" onclick="triggerAiPaperSelect()" class="glass-btn-primary">开始选题</button></div>
+                </section>
+            </div>`;
+        refreshPaperFilterSummary();
     }
 
     let filterDebounceTimer = null;
@@ -893,6 +959,7 @@
         cancelBankQuestionsFetch();
         clearTimeout(filterDebounceTimer);
         
+        refreshPaperFilterSummary();
         // Handle cascade resets
         if (key === 'compulsory') {
             window.PaperStore.filters.chapter = '';
@@ -1208,6 +1275,100 @@
         scrollPaperQuestionStreamToTop();
     };
 
+    function getPaperQuestionAnswerState(q) {
+        const answerExpanded = window.PaperStore.expandedAnswerIds.has(q.id);
+        const answerLoading = window.PaperStore.answerLoadingIds.has(q.id);
+        const answerError = window.PaperStore.answerErrors[q.id] || '';
+        const answerCached = hasCachedPaperAnswer(q.id);
+        const answerText = answerCached ? window.PaperStore.answerCache[q.id] : '';
+        const answerAvailabilityKnown = typeof q.has_answer === 'boolean' || answerCached;
+        const hasAnswer = Boolean((answerText || '').trim()) || q.has_answer === true || !answerAvailabilityKnown;
+
+        let answerBodyHtml = '';
+        if (answerExpanded) {
+            if (answerLoading) {
+                answerBodyHtml = `
+                    <div class="flex items-center justify-center gap-2 py-5 text-xs text-slate-500 dark:text-slate-400" aria-live="polite">
+                        <i class="fa-solid fa-spinner fa-spin text-brand-500"></i>
+                        <span>正在加载答案与解析...</span>
+                    </div>
+                `;
+            } else if (answerError) {
+                answerBodyHtml = `
+                    <div class="flex flex-wrap items-center justify-between gap-2 py-3 text-xs text-rose-600 dark:text-rose-300" role="alert">
+                        <span><i class="fa-solid fa-circle-exclamation mr-1"></i>${escapeHtml(answerError)}</span>
+                        <button type="button" onclick="window.retryPaperQuestionAnswer(${q.id})"
+                            class="px-3 py-1.5 rounded-lg border border-rose-200 bg-white hover:bg-rose-50 font-semibold transition-colors dark:bg-slate-800 dark:border-rose-900/60 dark:hover:bg-slate-700">
+                            重试
+                        </button>
+                    </div>
+                `;
+            } else if ((answerText || '').trim()) {
+                answerBodyHtml = typeof window.parseMarkdownWithMath === 'function'
+                    ? window.parseMarkdownWithMath(answerText)
+                    : window.MathBankSafe.sanitizeRichHtml(answerText);
+            } else {
+                answerBodyHtml = '<p class="py-3 text-xs text-slate-400 italic">本题暂无答案与解析。</p>';
+            }
+        }
+        return { answerExpanded, answerLoading, hasAnswer, answerBodyHtml };
+    }
+
+    function renderPaperAnswerMath(qid) {
+        const answerEl = document.getElementById(`paper-q-answer-content-${qid}`);
+        if (!answerEl || window.PaperStore.answerLoadingIds.has(qid)
+                || window.PaperStore.answerErrors[qid] || typeof renderMathInElement !== 'function') return;
+        try {
+            renderMathInElement(answerEl, {
+                delimiters: [
+                    { left: '$$', right: '$$', display: true },
+                    { left: '$', right: '$', display: false },
+                    { left: '\\(', right: '\\)', display: false },
+                    { left: '\\[', right: '\\]', display: true }
+                ],
+                throwOnError: false
+            });
+        } catch (e) { }
+        initializeAutoFigureSizing(answerEl);
+    }
+
+    function updatePaperQuestionAnswer(qid) {
+        const stream = document.getElementById('paperQuestionStream');
+        const button = document.getElementById(`paper-answer-toggle-${qid}`);
+        const section = document.getElementById(`paper-q-answer-${qid}`);
+        const content = document.getElementById(`paper-q-answer-content-${qid}`);
+        const q = window.PaperStore.questionsMap[qid];
+        // A delayed response must not replace a newly selected page or workspace.
+        if (!stream || !button || !section || !content || !q) return;
+        const streamTop = stream.getBoundingClientRect().top;
+        const anchor = Array.from(stream.querySelectorAll('.paper-resource-card'))
+            .find(card => card.getBoundingClientRect().bottom > streamTop);
+        const anchorTop = anchor ? anchor.getBoundingClientRect().top : null;
+        const { answerExpanded, answerLoading, hasAnswer, answerBodyHtml } = getPaperQuestionAnswerState(q);
+        const hint = answerExpanded ? '收起本题答案与解析' : (hasAnswer ? '查看本题答案与解析' : '本题暂无答案');
+        button.setAttribute('aria-expanded', String(answerExpanded));
+        button.setAttribute('aria-busy', String(answerLoading));
+        button.setAttribute('data-tooltip', hint);
+        button.disabled = !hasAnswer && !answerExpanded;
+        button.classList.toggle('is-expanded', answerExpanded);
+        button.querySelector('i').className = `fa-solid ${answerLoading ? 'fa-spinner fa-spin' : (answerExpanded ? 'fa-eye-slash' : 'fa-eye')}`;
+        button.querySelector('span').textContent = answerLoading ? '加载中' : (answerExpanded ? '收起答案' : (hasAnswer ? '查看答案' : '暂无答案'));
+        section.hidden = !answerExpanded;
+        content.innerHTML = answerBodyHtml;
+        if (answerExpanded) renderPaperAnswerMath(qid);
+        const collapseButton = document.getElementById('paperCollapseAnswersBtn');
+        if (collapseButton) {
+            const hasExpanded = Array.from(stream.querySelectorAll('.paper-answer-toggle'))
+                .some(item => item.getAttribute('aria-expanded') === 'true');
+            collapseButton.style.visibility = hasExpanded ? 'visible' : 'hidden';
+            collapseButton.disabled = !hasExpanded;
+        }
+        // Measure at completion, so users can keep scrolling while the request runs.
+        if (anchor && anchor.isConnected) {
+            stream.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
+        }
+    }
+
     // Render Part 3: Full-Width Question Stream
     function renderPart3QuestionStream() {
         const container = document.getElementById('paperQuestionStream');
@@ -1267,28 +1428,22 @@
                 </div>
 
                 <div class="flex flex-wrap items-center justify-end gap-3">
-                    ${hasVisibleExpandedAnswers ? `
-                        <button type="button" onclick="window.collapseAllPaperAnswers()"
-                            class="text-xs font-medium text-slate-500 hover:text-brand-600 transition-colors flex items-center space-x-1">
-                            <i class="fa-solid fa-eye-slash text-[10px]"></i>
-                            <span>收起全部答案</span>
-                        </button>
-                    ` : ''}
-                    ${cart.length > 0 ? `
-                        <button type="button" onclick="window.clearCart()" class="text-xs font-medium text-slate-400 hover:text-rose-500 transition-colors flex items-center space-x-1">
-                            <i class="fa-solid fa-trash-can text-[10px]"></i>
-                            <span>清空卷面 (${cart.length})</span>
-                        </button>
-                    ` : ''}
+                    <button type="button" id="paperCollapseAnswersBtn" onclick="window.collapseAllPaperAnswers()"
+                        aria-label="收起全部答案" title="收起全部答案" ${hasVisibleExpandedAnswers ? '' : 'disabled'}
+                        style="visibility: ${hasVisibleExpandedAnswers ? 'visible' : 'hidden'}"
+                        class="paper-collapse-answers text-xs font-medium text-slate-500 hover:text-brand-600">
+                        <i class="fa-solid fa-eye-slash" aria-hidden="true"></i>
+                    </button>
                 </div>
             </div>
         `;
 
         if (currentTab === 'all' && pagination.all.loading) {
             html += `
-                <div class="flex min-h-[220px] flex-col items-center justify-center rounded-2xl border border-slate-200/80 bg-white/60 text-slate-500 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-300" role="status" aria-live="polite">
-                    <i class="fa-solid fa-spinner fa-spin mb-3 text-xl text-brand-500"></i>
-                    <p class="text-sm font-semibold">正在加载题库第 ${pagination.all.retryPage || 1} 页...</p>
+                <div class="ui-state ui-state-loading min-h-[220px] rounded-2xl border border-slate-200/80 bg-white/60 dark:border-slate-700 dark:bg-slate-800/50" role="status" aria-live="polite">
+                    <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-spinner fa-spin"></i></span>
+                    <strong class="ui-state-title">正在加载题库第 ${pagination.all.retryPage || 1} 页</strong>
+                    <span class="ui-state-description">正在读取当前筛选条件下的题目资源。</span>
                 </div>
             `;
             container.innerHTML = html;
@@ -1297,13 +1452,13 @@
 
         if (currentTab === 'all' && pagination.all.error) {
             html += `
-                <div class="flex min-h-[220px] flex-col items-center justify-center rounded-2xl border border-rose-200 bg-rose-50/60 px-5 text-center dark:border-rose-900/60 dark:bg-rose-950/30" role="alert">
-                    <i class="fa-solid fa-circle-exclamation mb-3 text-xl text-rose-500"></i>
-                    <p class="text-sm font-semibold text-rose-700 dark:text-rose-300">${escapeHtml(pagination.all.error)}</p>
-                    <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">${Number.isInteger(pagination.all.total)
+                <div class="ui-state ui-state-error min-h-[220px] rounded-2xl border border-rose-200 bg-rose-50/60 px-5 dark:border-rose-900/60 dark:bg-rose-950/30" role="alert">
+                    <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-circle-exclamation"></i></span>
+                    <strong class="ui-state-title">${escapeHtml(pagination.all.error)}</strong>
+                    <span class="ui-state-description">${Number.isInteger(pagination.all.total)
                         ? `上次成功加载时共 ${pagination.all.total} 题，本次请求尚未完成。`
-                        : '当前筛选结果总数尚未确认。'}</p>
-                    <button type="button" onclick="window.retryPaperBankQuestions()" class="mt-4 rounded-lg border border-rose-200 bg-white px-4 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-100 dark:border-rose-800 dark:bg-slate-800 dark:text-rose-300 dark:hover:bg-slate-700">重新加载</button>
+                        : '当前筛选结果总数尚未确认。'}</span>
+                    <button type="button" onclick="window.retryPaperBankQuestions()" class="ui-state-action">重新加载</button>
                 </div>
             `;
             container.innerHTML = html;
@@ -1338,12 +1493,12 @@
                 ? (cart.length > 0 ? '请重新加载已选题目后再预览或导出试卷。' : '从“全库试题”中加入题目后，会在这里按卷面顺序显示。')
                 : '请在上方调节学段、章节、题型、难度或搜索条件。';
             html += `
-                <div class="flex flex-col items-center justify-center py-20 bg-white/50 backdrop-blur-md rounded-2xl border border-dashed border-slate-300 dark:bg-slate-800/40 dark:border-slate-700">
-                    <div class="w-12 h-12 rounded-2xl bg-brand-50 text-brand-500 flex items-center justify-center text-xl mb-3 dark:bg-slate-800">
+                <div class="ui-state ui-state-empty py-20 bg-white/50 backdrop-blur-md rounded-2xl border border-dashed border-slate-300 dark:bg-slate-800/40 dark:border-slate-700">
+                    <div class="ui-state-icon w-12 h-12 rounded-2xl bg-brand-50 text-brand-500 flex items-center justify-center text-xl dark:bg-slate-800">
                         <i class="fa-solid fa-folder-open"></i>
                     </div>
-                    <h4 class="font-semibold text-slate-700 dark:text-slate-200 mb-1">${emptyTitle}</h4>
-                    <p class="text-xs text-slate-500 max-w-xs text-center">${emptyDescription}</p>
+                    <h4 class="ui-state-title font-semibold text-slate-700 dark:text-slate-200">${emptyTitle}</h4>
+                    <p class="ui-state-description text-xs text-slate-500 max-w-xs text-center">${emptyDescription}</p>
                 </div>
             `;
             html += renderPaperStreamPagination(currentTab, currentPage, total, totalPages);
@@ -1363,107 +1518,64 @@
             const diffTag = getDifficultyBadge(q.difficulty);
             const usageCount = q.usage_count || 0;
             seedPaperAnswerCache(q);
-            const answerExpanded = window.PaperStore.expandedAnswerIds.has(q.id);
-            const answerLoading = window.PaperStore.answerLoadingIds.has(q.id);
-            const answerError = window.PaperStore.answerErrors[q.id] || '';
-            const answerCached = hasCachedPaperAnswer(q.id);
-            const answerText = answerCached ? window.PaperStore.answerCache[q.id] : '';
-            const answerAvailabilityKnown = typeof q.has_answer === 'boolean' || answerCached;
-            const hasAnswer = Boolean((answerText || '').trim()) || q.has_answer === true || !answerAvailabilityKnown;
-
-            let answerBodyHtml = '';
-            if (answerExpanded) {
-                if (answerLoading) {
-                    answerBodyHtml = `
-                        <div class="flex items-center justify-center gap-2 py-5 text-xs text-slate-500 dark:text-slate-400" aria-live="polite">
-                            <i class="fa-solid fa-spinner fa-spin text-brand-500"></i>
-                            <span>正在加载答案与解析...</span>
-                        </div>
-                    `;
-                } else if (answerError) {
-                    answerBodyHtml = `
-                        <div class="flex flex-wrap items-center justify-between gap-2 py-3 text-xs text-rose-600 dark:text-rose-300" role="alert">
-                            <span><i class="fa-solid fa-circle-exclamation mr-1"></i>${escapeHtml(answerError)}</span>
-                            <button type="button" onclick="window.retryPaperQuestionAnswer(${q.id})"
-                                class="px-3 py-1.5 rounded-lg border border-rose-200 bg-white hover:bg-rose-50 font-semibold transition-colors dark:bg-slate-800 dark:border-rose-900/60 dark:hover:bg-slate-700">
-                                重试
-                            </button>
-                        </div>
-                    `;
-                } else if ((answerText || '').trim()) {
-                    answerBodyHtml = typeof window.parseMarkdownWithMath === 'function'
-                        ? window.parseMarkdownWithMath(answerText)
-                        : window.MathBankSafe.sanitizeRichHtml(answerText);
-                } else {
-                    answerBodyHtml = '<p class="py-3 text-xs text-slate-400 italic">本题暂无答案与解析。</p>';
-                }
-            }
+            const { answerExpanded, answerLoading, hasAnswer, answerBodyHtml } = getPaperQuestionAnswerState(q);
 
             const cardBorderClass = inCart 
                 ? 'border-brand-500 ring-2 ring-brand-500/20 bg-brand-50/10 dark:border-brand-500/60 dark:bg-brand-900/20'
                 : 'border-slate-200/80 hover:border-brand-200/80 bg-white/80 dark:bg-slate-800/80 dark:border-slate-700/70';
 
             html += `
-                <div class="p-5 rounded-2xl border ${cardBorderClass} shadow-sm hover:shadow-md transition-all">
+                <div data-paper-question-id="${q.id}" class="paper-resource-card p-5 rounded-2xl border ${cardBorderClass} shadow-sm hover:shadow-md transition-all">
                     <!-- Card Top Controls Bar -->
-                    <div class="flex flex-col gap-3 pb-3 mb-3 border-b border-slate-100 sm:flex-row sm:items-center sm:justify-between dark:border-slate-700/60">
-                        <div class="flex w-full items-center space-x-2 flex-wrap gap-y-1 sm:w-auto">
+                    <div class="paper-resource-header">
+                        <div class="paper-resource-heading">
                             <span class="font-bold text-slate-800 dark:text-slate-100 text-sm">#${escapeHtml(q.seq_num !== undefined ? q.seq_num : q.id)}</span>
                             <span class="px-2 py-0.5 rounded-lg text-xs font-semibold bg-brand-50 text-brand-600 border border-brand-200/50 dark:bg-brand-900/30 dark:text-brand-200 dark:border-brand-900/50">${escapeHtml(qTypeLabel)}</span>
-                            ${diffTag}
-                            ${q.category_compulsory ? `<span class="px-2 py-0.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300">${escapeHtml(q.category_compulsory)}</span>` : ''}
-                            ${q.category_chapter ? `<span class="px-2 py-0.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400">${escapeHtml(q.category_chapter)}</span>` : ''}
-                            <span class="px-2 py-0.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-500 dark:bg-slate-700/50 dark:text-slate-400" title="引用次数">引用 ${escapeHtml(usageCount)} 次</span>
+                                ${inCart && currentTab === 'selected' ? `
+                                    <button onclick="window.movePaperQuestion(${cartIndex}, 'up')" ${cartIndex === 0 ? 'disabled' : ''}
+                                        class="paper-resource-reorder" title="上移" aria-label="上移本题">
+                                        <i class="fa-solid fa-arrow-up text-xs"></i>
+                                    </button>
+                                    <button onclick="window.movePaperQuestion(${cartIndex}, 'down')" ${cartIndex === cart.length - 1 ? 'disabled' : ''}
+                                        class="paper-resource-reorder" title="下移" aria-label="下移本题">
+                                        <i class="fa-solid fa-arrow-down text-xs"></i>
+                                    </button>
+                                ` : ''}
+
                         </div>
 
-                        <div class="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
-                            <button type="button"
+                        <div class="paper-resource-actions">
+                            <button type="button" id="paper-answer-toggle-${q.id}"
                                 onclick="window.togglePaperQuestionAnswer(${q.id})"
                                 aria-expanded="${answerExpanded ? 'true' : 'false'}"
-                                ${answerExpanded ? `aria-controls="paper-q-answer-${q.id}"` : ''}
-                                ${(!hasAnswer && !answerExpanded) || answerLoading ? 'disabled' : ''}
-                                title="${hasAnswer || answerExpanded ? (answerExpanded ? '收起本题答案与解析' : '查看本题答案与解析') : '本题暂无答案'}"
-                                class="min-h-[44px] sm:min-h-[32px] px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all flex items-center justify-center space-x-1.5
-                                    ${answerExpanded
-                                        ? 'border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 dark:border-brand-700 dark:bg-brand-900/40 dark:text-brand-200'
-                                        : 'border-slate-200 bg-white/80 text-slate-600 hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-brand-700'}
-                                    disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:border-slate-200 disabled:hover:bg-white/80 disabled:hover:text-slate-600">
-                                <i class="fa-solid ${answerLoading ? 'fa-spinner fa-spin' : (answerExpanded ? 'fa-eye-slash' : 'fa-eye')} text-[11px]"></i>
+                                aria-controls="paper-q-answer-${q.id}" aria-busy="${answerLoading ? 'true' : 'false'}"
+                                ${!hasAnswer && !answerExpanded ? 'disabled' : ''}
+                                title="${answerExpanded ? '收起本题答案与解析' : (hasAnswer ? '查看本题答案与解析' : '本题暂无答案')}"
+                                class="paper-answer-toggle ${answerExpanded ? 'is-expanded' : ''}">
+                                <i class="fa-solid ${answerLoading ? 'fa-spinner fa-spin' : (answerExpanded ? 'fa-eye-slash' : 'fa-eye')}" aria-hidden="true"></i>
                                 <span>${answerLoading ? '加载中' : (answerExpanded ? '收起答案' : (hasAnswer ? '查看答案' : '暂无答案'))}</span>
                             </button>
 
                             ${inCart ? `
                                 <!-- Score Selector -->
-                                <div class="paper-score-pill flex items-center space-x-1 px-2.5 py-1 rounded-xl">
-                                    <span class="text-xs font-medium">分值:</span>
+                                <label class="paper-score-pill">
                                     <input type="number" min="1" max="100" value="${currentScore}" 
                                         onchange="window.updatePaperQuestionScore(${q.id}, this.value)"
-                                        class="w-12 text-center text-xs font-bold rounded-lg focus:outline-none">
-                                    <span class="text-xs font-medium">分</span>
-                                </div>
-
-                                <!-- Move Up / Move Down -->
-                                ${currentTab === 'selected' ? `
-                                    <button onclick="window.movePaperQuestion(${cartIndex}, 'up')" ${cartIndex === 0 ? 'disabled' : ''}
-                                        class="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 disabled:opacity-30 dark:hover:bg-slate-700" title="上移">
-                                        <i class="fa-solid fa-arrow-up text-xs"></i>
-                                    </button>
-                                    <button onclick="window.movePaperQuestion(${cartIndex}, 'down')" ${cartIndex === cart.length - 1 ? 'disabled' : ''}
-                                        class="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 disabled:opacity-30 dark:hover:bg-slate-700" title="下移">
-                                        <i class="fa-solid fa-arrow-down text-xs"></i>
-                                    </button>
-                                ` : ''}
+                                        aria-label="题目 #${escapeHtml(q.seq_num !== undefined ? q.seq_num : q.id)} 的分值"
+                                        class="text-center text-xs font-semibold rounded-md">
+                                    <span aria-hidden="true">分</span>
+                                </label>
 
                                 <!-- Remove Button -->
                                 <button onclick="window.removeFromCart(${q.id})" 
-                                    class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-500 text-white shadow-sm hover:bg-rose-600 active:scale-95 transition-all flex items-center space-x-1" title="点击移出试卷">
+                                    class="paper-cart-action is-selected" title="点击移出试卷" aria-label="已入卷，点击移出本题">
                                     <i class="fa-solid fa-check text-xs"></i>
                                     <span>已入卷</span>
                                 </button>
                             ` : `
                                 <!-- Add Button -->
                                 <button onclick="window.addToCart(${q.id})" 
-                                    class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-brand-600 text-white shadow-sm hover:bg-brand-700 active:scale-95 transition-all flex items-center space-x-1">
+                                    class="paper-cart-action">
                                     <i class="fa-solid fa-plus text-xs"></i>
                                     <span>加入试卷</span>
                                 </button>
@@ -1471,13 +1583,18 @@
                         </div>
                     </div>
 
+                    <div class="paper-resource-meta">
+                        ${diffTag}
+                        <span class="paper-resource-category" title="${escapeHtml([q.category_compulsory, q.category_chapter].filter(Boolean).join(' · '))}">${escapeHtml([q.category_compulsory, q.category_chapter].filter(Boolean).join(' · '))}</span>
+                        ${usageCount ? `<span class="paper-resource-usage">引用 ${escapeHtml(usageCount)} 次</span>` : ''}
+                    </div>
+
                     <!-- Full Question Render Content -->
                     <div class="question-full-render-box text-sm leading-relaxed text-slate-800 dark:text-slate-100 overflow-x-auto select-text" id="paper-q-render-${q.id}">
                         ${formatQuestionContentHtml(q.content, q.id, getQuestionFigAlign(q), false, false, getQuestionFigSize(q), q.image_layouts || {})}
                     </div>
 
-                    ${answerExpanded ? `
-                        <section id="paper-q-answer-${q.id}"
+                        <section id="paper-q-answer-${q.id}" ${answerExpanded ? '' : 'hidden'}
                             role="region"
                             aria-label="题目 #${escapeHtml(q.seq_num !== undefined ? q.seq_num : q.id)} 的参考答案与解析"
                             class="mt-4 pt-4 border-t border-dashed border-brand-200/80 dark:border-brand-900/70">
@@ -1489,7 +1606,6 @@
                                 <div id="paper-q-answer-content-${q.id}">${answerBodyHtml}</div>
                             </div>
                         </section>
-                    ` : ''}
                 </div>
             `;
         });
@@ -1518,20 +1634,7 @@
                 } catch (e) { }
             }
 
-            const answerEl = document.getElementById(`paper-q-answer-content-${q.id}`);
-            if (answerEl && !window.PaperStore.answerLoadingIds.has(q.id) && !window.PaperStore.answerErrors[q.id] && typeof renderMathInElement === 'function') {
-                try {
-                    renderMathInElement(answerEl, {
-                        delimiters: [
-                            { left: '$$', right: '$$', display: true },
-                            { left: '$', right: '$', display: false },
-                            { left: '\\(', right: '\\)', display: false },
-                            { left: '\\[', right: '\\]', display: true }
-                        ],
-                        throwOnError: false
-                    });
-                } catch (e) { }
-            }
+            if (window.PaperStore.expandedAnswerIds.has(q.id)) renderPaperAnswerMath(q.id);
         });
         initializeAutoFigureSizing(container);
     }
@@ -1620,10 +1723,11 @@
         ` : '';
 
         container.innerHTML = `
-            ${aiAnalysisBanner}
-            ${cartLoadBanner}
-            <!-- Part 1: Top Fixed Control Section (Non-scrolling Studio Panel) -->
-            <div class="shrink-0 mb-3">
+            <!-- Controls and A4 pages share one scroll area. -->
+            <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar pt-1 pb-10 flex flex-col items-center" id="a4PaperPreviewSheet">
+            <div class="paper-preview-actions w-full shrink-0 mb-3">
+                ${aiAnalysisBanner}
+                ${cartLoadBanner}
                 <div class="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-3 rounded-2xl flex flex-col space-y-2.5 shadow-sm">
                     <!-- Row 1: Header Stats & Solution Space Config -->
                     <div class="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-slate-100 dark:border-slate-800/60">
@@ -1662,70 +1766,31 @@
                         </div>
                     </div>
 
-                    <!-- Row 2: Paper Management Actions (Clear, Save, History) -->
-                    <div class="flex items-center justify-between gap-2.5 pb-2 border-b border-slate-100 dark:border-slate-800/60">
-                        ${totalCount > 0 ? `
-                            <button onclick="clearCart()" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-rose-50/80 text-rose-600 border border-rose-200/70 hover:bg-rose-100/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-rose-950/40 dark:border-rose-800/60 dark:text-rose-300" title="清空当前试卷已选题目">
-                                <i class="fa-solid fa-trash-can"></i>
-                                <span>清空卷面</span>
-                            </button>
-                        ` : ''}
-                        <button onclick="savePaperToDb()" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap" title="保存当前试卷至本地数据库">
-                            <i class="fa-solid fa-floppy-disk"></i>
-                            <span>保存试卷</span>
-                        </button>
-                        <button onclick="openSavedPapersModal()" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-amber-500 text-white shadow-sm hover:bg-amber-600 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap" title="查阅与管理历史归档试卷">
-                            <i class="fa-solid fa-folder-open"></i>
-                            <span>历史试卷库</span>
-                        </button>
+                    <div class="paper-primary-actions">
+                        <button type="button" onclick="window.clearCart()" ${cart.length ? '' : 'disabled'} class="glass-btn paper-clear-action" title="清空当前已选题目"><i class="fa-solid fa-trash-can" aria-hidden="true"></i><span>清空卷面</span></button>
+                        <button type="button" onclick="savePaperToDb()" ${cart.length ? '' : 'disabled'} class="glass-btn-primary" title="保存当前试卷至本地数据库"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i><span>保存试卷</span></button>
                     </div>
+                    <div class="paper-export-actions">
+                        <button type="button" onclick="exportPaperPdf('paper')" ${totalCount > 0 && !cartIncomplete ? '' : 'disabled'} class="glass-btn" title="编译并打开试卷 PDF 预览"><i class="fa-solid fa-file-pdf" aria-hidden="true"></i><span>PDF 预览</span></button>
+                        <button type="button" onclick="exportPaperWord()" ${totalCount > 0 && !cartIncomplete ? '' : 'disabled'} class="glass-btn" title="导出可编辑 Word 试卷正文"><i class="fa-solid fa-file-word" aria-hidden="true"></i><span>Word 导出</span></button>
+                        <button type="button" onclick="exportPaperBundle()" ${totalCount > 0 && !cartIncomplete ? '' : 'disabled'} class="glass-btn" title="打包导出 LaTeX 源码、插图及编译好的 PDF"><i class="fa-solid fa-box-archive" aria-hidden="true"></i><span>LaTeX 打包</span></button>
+                    </div>
+                    ${meta.paper_type === 'exam_19' ? `
+                        <button type="button" onclick="exportPaperPdf('sheet')" ${totalCount > 0 && !cartIncomplete ? '' : 'disabled'} class="glass-btn paper-answer-sheet-action" title="编译并打开 A3 双面答题卡 PDF 预览"><i class="fa-solid fa-file-lines" aria-hidden="true"></i><span>答题卡 PDF 预览</span></button>
+                    ` : ''}
+                    ${cart.length ? '' : '<p class="paper-empty-hint">从左侧加入题目后，即可保存和导出。</p>'}
 
-                    <!-- Row 3: Preview & Export Options -->
-                    <div class="flex flex-wrap items-center justify-between gap-2 sm:gap-2.5">
-                        ${meta.paper_type === 'exam_19' ? `
-                            <button onclick="exportPaperPdf('paper')" class="flex-1 px-2.5 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="编译并打开试卷 PDF 预览">
-                                <i class="fa-solid fa-file-pdf"></i>
-                                <span>试卷 PDF 预览</span>
-                            </button>
-                            <button onclick="exportPaperPdf('sheet')" class="flex-1 px-2.5 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="编译并打开 A3 双面答题卡 PDF 预览">
-                                <i class="fa-solid fa-file-lines"></i>
-                                <span>答题卡 PDF 预览</span>
-                            </button>
-                            <button onclick="exportPaperWord()" class="flex-1 px-2.5 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="导出可编辑 Word 试卷正文（不含答题卡）">
-                                <i class="fa-solid fa-file-word"></i>
-                                <span>Word 导出</span>
-                            </button>
-                            <button onclick="exportPaperBundle()" class="flex-1 px-2.5 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="打包导出 LaTeX 源码、插图及编译好的 PDF 全套文件">
-                                <i class="fa-solid fa-box-archive"></i>
-                                <span>LaTeX 打包</span>
-                            </button>
-                        ` : `
-                            <button onclick="exportPaperPdf('paper')" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="编译并打开试卷 PDF 预览">
-                                <i class="fa-solid fa-file-pdf"></i>
-                                <span>PDF 预览</span>
-                            </button>
-                            <button onclick="exportPaperWord()" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="导出保留原生公式的可编辑 Word 试卷">
-                                <i class="fa-solid fa-file-word"></i>
-                                <span>Word 导出</span>
-                            </button>
-                            <button onclick="exportPaperBundle()" class="flex-1 py-1.5 justify-center rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/80 active:scale-95 transition-all flex items-center space-x-1.5 whitespace-nowrap dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700" title="打包导出 LaTeX 源码、插图及编译好的 PDF 全套文件">
-                                <i class="fa-solid fa-box-archive"></i>
-                                <span>LaTeX 打包</span>
-                            </button>
-                        `}
-                    </div>
                 </div>
             </div>
 
-            <!-- Part 2: Independent Scrollable A4 Desk Canvas Paper Container -->
-            <div class="flex-1 overflow-y-auto custom-scrollbar pt-1 pb-10 flex flex-col items-center" id="a4PaperPreviewSheet">
+            <!-- A4 pages remain direct children for measured pagination. -->
                 ${cartIncomplete ? `
                     <div class="m-auto max-w-sm rounded-2xl border border-dashed border-amber-300 bg-white/80 px-6 py-8 text-center text-amber-800 shadow-sm dark:border-amber-800 dark:bg-slate-900/70 dark:text-amber-200">
                         <i class="fa-solid fa-file-circle-exclamation mb-3 text-2xl"></i>
                         <p class="text-sm font-semibold">卷面题目尚未完整加载</p>
                         <p class="mt-1 text-xs opacity-80">重新加载成功后才会显示完整 A4 预览。</p>
                     </div>
-                ` : generateA4PaperPagesHtml(cart, meta, totalCount, totalScore)}
+                ` : cart.length === 0 ? '<div class="paper-start-hint"><i class="fa-solid fa-file-circle-plus" aria-hidden="true"></i><strong>先选几道题，开始组卷</strong><p>在左侧点击“加入试卷”，这里会显示实时卷面。</p></div>' : generateA4PaperPagesHtml(cart, meta, totalCount, totalScore)}
             </div>
         `;
 
@@ -3311,15 +3376,142 @@
         }
     };
 
-    // ----------------- Saved Papers Archive Library Modal -----------------
+    // ----------------- Saved Papers Archive Library -----------------
+    let savedPaperRecords = [];
+    let savedPaperLoadSequence = 0;
+    window.filterSavedPapers = function () {
+        const container = document.getElementById('savedPapersListContainer');
+        const countEl = document.getElementById('savedPaperTotalCount');
+        if (!container) return;
+            const term = (document.getElementById('savedPaperSearch')?.value || '').trim().toLocaleLowerCase();
+            const type = document.getElementById('savedPaperType')?.value || '';
+            const sort = document.getElementById('savedPaperSort')?.value || 'newest';
+            const papers = savedPaperRecords.filter(paper => (!type || paper.paper_type === type) &&
+                `${paper.title || ''} ${paper.subtitle || ''}`.toLocaleLowerCase().includes(term)).sort((a, b) =>
+                sort === 'title' ? String(a.title || '').localeCompare(String(b.title || ''), 'zh-CN') :
+                (sort === 'oldest' ? 1 : -1) * (String(a.created_at || '').localeCompare(String(b.created_at || '')) || Number(a.id) - Number(b.id)));
+            const result = document.getElementById('savedPaperResultCount');
+            if (result) result.textContent = `显示 ${papers.length} / ${savedPaperRecords.length} 份`;
+            if (countEl) countEl.textContent = String(savedPaperRecords.length);
+            if (papers.length === 0) {
+                container.innerHTML = `
+                    <div class="records-empty-state ui-state ui-state-empty">
+                        <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-box-open"></i></span>
+                        <strong class="ui-state-title">${savedPaperRecords.length ? '没有匹配的试卷' : '暂无保存的试卷'}</strong>
+                        <span class="ui-state-description">${savedPaperRecords.length ? '请调整标题、类型或清空搜索条件。' : '在智能组卷中保存试卷后，会显示在这里。'}</span>
+                    </div>
+                `;
+                return;
+            }
+
+            const paperTypeMap = {
+                exam_19: '19题高考卷',
+                exam: '常规试卷',
+                quiz: '日常小练',
+                handout: '讲义/教案'
+            };
+            container.innerHTML = `<div class="records-paper-grid">${papers.map((paper) => {
+                const paperId = Number.parseInt(paper.id, 10);
+                const typeLabel = paperTypeMap[paper.paper_type] || '试卷';
+                const dateText = paper.created_at
+                    ? new Date(paper.created_at).toLocaleString('zh-CN', {
+                        year: 'numeric', month: '2-digit', day: '2-digit',
+                        hour: '2-digit', minute: '2-digit'
+                    })
+                    : '未知时间';
+                const score = escapeHtml(String(paper.total_score ?? 0));
+                const questionCount = escapeHtml(String(paper.question_count ?? 0));
+                const title = escapeHtml(paper.title || '未命名试卷');
+                const subtitle = paper.subtitle
+                    ? `备注：${escapeHtml(paper.subtitle)}`
+                    : '暂无备注';
+
+                return `
+                    <article class="saved-paper-card">
+                        <div class="saved-paper-card-heading">
+                            <span class="saved-paper-type-badge">${escapeHtml(typeLabel)}</span>
+                            <h4 title="${title}">${title}</h4>
+                        </div>
+                        <div class="saved-paper-card-meta">
+                            <span><i class="fa-solid fa-calculator" aria-hidden="true"></i> ${score} 分</span>
+                            <span><i class="fa-solid fa-list-check" aria-hidden="true"></i> ${questionCount} 题</span>
+                            <span><i class="fa-regular fa-clock" aria-hidden="true"></i> ${escapeHtml(dateText)}</span>
+                        </div>
+                        <p class="saved-paper-card-note">${subtitle}</p>
+                        <div class="saved-paper-card-actions">
+                            <button type="button" class="saved-paper-load-action" onclick="loadSavedPaper(${paperId})" title="载入试卷至智能组卷工作区">
+                                <i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i><span>载入试卷</span>
+                            </button>
+                            <button type="button" class="saved-paper-pdf-action" onclick="quickExportPaperPdf(${paperId})" title="快速编译 PDF">
+                                <i class="fa-solid fa-file-pdf" aria-hidden="true"></i><span>导出 PDF</span>
+                            </button>
+                            <button type="button" class="saved-paper-delete-action" onclick="deleteSavedPaper(${paperId})" aria-label="删除试卷 ${title}" title="删除此保存试卷">
+                                <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
+                            </button>
+                        </div>
+                    </article>
+                `;
+            }).join('')}</div>`;
+    };
+
+    async function renderSavedPapersWorkspace() {
+        const sequence = ++savedPaperLoadSequence;
+        const container = document.getElementById('savedPapersListContainer');
+        const countEl = document.getElementById('savedPaperTotalCount');
+        if (!container) return;
+
+        container.innerHTML = `
+            <div class="records-loading-state ui-state ui-state-loading" role="status" aria-live="polite">
+                <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-spinner fa-spin"></i></span>
+                <strong class="ui-state-title">正在获取历史试卷</strong>
+                <span class="ui-state-description">已保存的试卷记录加载完成后会显示在这里。</span>
+            </div>
+        `;
+
+        try {
+            const res = await fetch('/api/papers');
+            const data = await res.json();
+            if (data.status !== 'success' || !Array.isArray(data.data)) {
+                throw new Error(data.message || '无法读取历史试卷');
+            }
+
+            if (sequence !== savedPaperLoadSequence) return;
+            savedPaperRecords = data.data;
+            window.filterSavedPapers();
+        } catch (error) {
+            if (sequence !== savedPaperLoadSequence) return;
+            console.error(error);
+            if (countEl) countEl.textContent = '0';
+            container.innerHTML = `
+                <div class="records-error-state ui-state ui-state-error" role="alert">
+                    <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-circle-exclamation"></i></span>
+                    <strong class="ui-state-title">历史试卷加载失败</strong>
+                    <span class="ui-state-description">${escapeHtml(error.message || '请稍后重试')}</span>
+                </div>
+            `;
+        }
+    }
+
     window.closeSavedPapersModal = function () {
         const modal = document.getElementById('savedPapersModal');
-        if (!modal) return;
+        if (!modal) {
+            if (window.PaperStore.activeWorkspace === 'records' && typeof window.selectWorkspace === 'function') {
+                window.selectWorkspace('paper', '智能组卷');
+            }
+            return;
+        }
         window.MathBankModal.close(modal);
         modal.remove();
     };
 
     window.openSavedPapersModal = async function () {
+        const recordsWorkspace = document.getElementById('recordsWorkspaceSection');
+        if (recordsWorkspace && typeof window.selectWorkspace === 'function') {
+            window.selectWorkspace('records', '试卷记录');
+            await renderSavedPapersWorkspace();
+            return;
+        }
+
         let modal = document.getElementById('savedPapersModal');
         if (modal) {
             window.MathBankModal.close(modal);
@@ -4353,34 +4545,13 @@
 
     // Init on DOMContentLoaded
     document.addEventListener('DOMContentLoaded', function () {
+        initPaperSplitResizer();
         loadStateFromStorage();
         updateCartBadges();
 
-        // Restore active workspace if same server instance run (page refresh / tab re-open)
-        const currentServerId = window.__serverInstanceId || '';
-        let savedServerId = '';
-        let savedWorkspace = 'bank';
-        try {
-            savedServerId = localStorage.getItem('mathbank_server_instance_id') || '';
-            savedWorkspace = localStorage.getItem('mathbank_active_workspace') || 'bank';
-        } catch (e) { }
-
-        if (currentServerId && savedServerId === currentServerId) {
-            if (savedWorkspace === 'paper') {
-                if (typeof window.selectWorkspace === 'function') {
-                    window.selectWorkspace('paper', '组卷排版工作台');
-                }
-            }
-        } else {
-            // Fresh server startup (.command / .bat re-launch) -> reset to bank studio default
-            try {
-                localStorage.setItem('mathbank_active_workspace', 'bank');
-                if (currentServerId) {
-                    localStorage.setItem('mathbank_server_instance_id', currentServerId);
-                }
-            } catch (e) { }
-        }
-        document.documentElement.classList.remove('init-ws-paper');
+        // A reload returns home; cart, paper metadata and local drafts stay intact.
+        window.selectWorkspace('dashboard', '工作台');
+        document.documentElement.classList.remove('init-ws-dashboard', 'init-ws-paper');
     });
 
 })();

@@ -1156,13 +1156,18 @@ class WordExamBuilder:
     def add_question(self, item: PreparedQuestion, number: int) -> None:
         align = item.question.get("figure_align") or "right"
         usable_images = [path for path in item.images if path.exists()]
-        image_layouts = normalize_image_layouts(item.question.get("image_layouts", {}), item.stem)
+        image_layouts = normalize_image_layouts(item.question.get("image_layouts", {}), item.question.get("content", ""))
         preserve_inline_images = bool(IMAGE_PATTERN.search(item.stem))
-        anchored_names = {
+        stem_image_names = {
             Path(match.group(1)).name
             for match in IMAGE_PATTERN.finditer(item.stem)
-        } if preserve_inline_images else set()
-        inline_images = [path for path in usable_images if path.name in anchored_names]
+        }
+        choice_image_names = {
+            Path(match.group(1)).name
+            for choice in item.choices for match in IMAGE_PATTERN.finditer(choice)
+        }
+        anchored_names = stem_image_names | choice_image_names
+        inline_images = [path for path in usable_images if path.name in stem_image_names]
         _, tail = split_image_anchors(item.question.get('content', ''))
         tail_names = {Path(m[1]).name for m in IMAGE_PATTERN.finditer(tail)}
         detached_images = [path for path in usable_images if path.name not in anchored_names or path.name in tail_names]
@@ -1215,7 +1220,7 @@ class WordExamBuilder:
                     )
 
         if item.choices:
-            self.add_choices(item.choices)
+            self.add_choices(item.choices, images=usable_images, image_layouts=image_layouts)
 
         if is_written_question_type(item.question.get("question_type", "single_choice")) and item.solution_space > 0:
             spacer = self.doc.add_paragraph()
@@ -1295,8 +1300,9 @@ class WordExamBuilder:
             self.diagnostics.missing_images += 1
             self.diagnostics.warnings.append(f"插图无法写入：{path.name}")
 
-    def add_choices(self, choices: list[str]) -> None:
-        plain_lengths = [len(re.sub(r"\\[A-Za-z]+|[{}$\\]", "", value)) for value in choices]
+    def add_choices(self, choices: list[str], *, images: list[Path] | None = None,
+                    image_layouts: dict | None = None) -> None:
+        plain_lengths = [len(re.sub(r"\\[A-Za-z]+|[{}$\\]", "", IMAGE_PATTERN.sub("", value))) for value in choices]
         max_length = max(plain_lengths, default=0)
         columns = 4 if len(choices) <= 4 and max_length <= 10 else 2 if max_length <= 24 else 1
         rows = (len(choices) + columns - 1) // columns
@@ -1306,6 +1312,7 @@ class WordExamBuilder:
         _set_table_borders(table)
         total_twips = 9000
         width = total_twips // columns
+        _set_table_geometry(table, [width] * columns)
         for row_index, row in enumerate(table.rows):
             _prevent_row_split(row)
             for col_index, cell in enumerate(row.cells):
@@ -1317,9 +1324,38 @@ class WordExamBuilder:
                 if choice_index >= len(choices):
                     continue
                 label = chr(ord("A") + choice_index)
-                run = p.add_run(f"{label}. ")
+                label_paragraph = p
+                if IMAGE_PATTERN.fullmatch(choices[choice_index].strip()):
+                    # Inline pictures sit on the text baseline, leaving A/B/C/D
+                    # at their bottom. Separate cells give Word/WPS real vertical
+                    # centering without a font- or image-height-dependent offset.
+                    pair = cell.add_table(rows=1, cols=2)
+                    pair.autofit = False
+                    _set_table_borders(pair)
+                    _set_table_geometry(pair, [300, max(1, width - 440)])
+                    _prevent_row_split(pair.rows[0])
+                    for part in pair.rows[0].cells:
+                        _set_cell_margins(part, 0, 0, 0, 0)
+                        part.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                        part.paragraphs[0].paragraph_format.space_before = Pt(0)
+                        part.paragraphs[0].paragraph_format.space_after = Pt(0)
+                    cell._tc.remove(p._p)
+                    # Word requires a paragraph after a nested table; keep that
+                    # structural paragraph from adding a blank line below images.
+                    tail = cell.paragraphs[-1]
+                    tail.paragraph_format.space_before = Pt(0)
+                    tail.paragraph_format.space_after = Pt(0)
+                    tail.paragraph_format.line_spacing = Pt(1)
+                    label_paragraph = pair.cell(0, 0).paragraphs[0]
+                    p = pair.cell(0, 1).paragraphs[0]
+                run = label_paragraph.add_run(f"{label}. ")
                 _set_run_font(run, BODY_FONT_SIZE, bold=True)
-                self.add_mixed(p, choices[choice_index], BODY_FONT_SIZE)
+                self.add_mixed(
+                    p, choices[choice_index], BODY_FONT_SIZE,
+                    images=images, image_layouts=image_layouts,
+                    max_image_width=max(0.4, (width - 440) / 1440),
+                    max_image_height=WORD_AUTO_FIGURE_MAX_HEIGHT_INCHES,
+                )
         after = self.doc.add_paragraph()
         after.paragraph_format.space_after = Pt(1)
 
