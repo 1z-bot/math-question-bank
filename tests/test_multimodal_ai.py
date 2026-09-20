@@ -501,3 +501,50 @@ def test_tikz_correction_uses_resolved_bailian_provider(tmp_path):
     assert kwargs["json"]["max_completion_tokens"] == 16384
     assert "reasoning_effort" not in kwargs["json"]
     assert len(kwargs["json"]["messages"][0]["content"]) == 2
+
+
+def test_deepseek_flash_ocr_sends_standard_image_block_and_disables_thinking(tmp_path):
+    image_path = tmp_path / 'formula.png'
+    image_path.write_bytes(_png_bytes())
+    provider = resolve_ocr_provider('deepseek', {'DEEPSEEK_API_KEY':'test-ds-key'})
+    upstream = MagicMock(status_code=200)
+    upstream.json.return_value = {'choices':[{'message':{'content':'$x=2$'}}]}
+    with patch('mathbank.ai_http.robust_request_post', return_value=upstream) as post:
+        assert ocr_via_provider(str(image_path), provider) == '$x=2$'
+    assert post.call_args.args[0] == 'https://api.deepseek.com/chat/completions'
+    request = post.call_args.kwargs['json']
+    assert request['model'] == 'deepseek-flash'
+    assert request['thinking'] == {'type':'disabled'}
+    assert request['messages'][0]['role'] == 'user'
+    assert request['messages'][0]['content'][1]['image_url']['url'].startswith('data:image/png;base64,')
+    assert 'enable_thinking' not in request and 'reasoning_effort' not in request
+
+
+def test_deepseek_text_only_model_is_rejected_before_ocr_upload():
+    provider = resolve_ocr_provider('deepseek', {'DEEPSEEK_OCR_MODEL':'deepseek-v4-pro'})
+    with patch('main.post_chat_completion') as post:
+        with pytest.raises(ValueError, match='不支持图像输入'):
+            ocr_via_provider('/not-read.png', provider)
+        post.assert_not_called()
+
+
+@pytest.mark.parametrize('engine', ['deepseek', 'default'])
+def test_single_question_ocr_supports_deepseek_choice(client, engine):
+    persisted = None
+    try:
+        with patch.dict(os.environ, {'DEEPSEEK_API_KEY':'test-ds-key', 'OCR_PREFER_ENGINE':'deepseek', 'DEEPSEEK_OCR_MODEL':'deepseek-flash'}), patch('main.ocr_via_provider', return_value='$x=2$') as ocr:
+            response = client.post('/api/ocr', data={'engine':engine, 'skip_tikz':'true'},
+                files={'file':('formula.png', _png_bytes(), 'image/png')}, headers={'X-Local-Token':LOCAL_TOKEN})
+        assert response.status_code == 200, response.text
+        assert ocr.call_args.args[1].provider_code == 'deepseek'
+        assert ocr.call_args.args[1].model_name == 'deepseek-flash'
+        persisted = Path('main.py').resolve().parent / response.json()['image_path'].lstrip('/')
+    finally:
+        if persisted is not None:
+            persisted.unlink(missing_ok=True)
+
+
+def test_pdf_ocr_uses_deepseek_when_selected():
+    with patch.dict(os.environ, {'OCR_PREFER_ENGINE':'deepseek', 'DEEPSEEK_API_KEY':'test-ds-key', 'DEEPSEEK_OCR_MODEL':'deepseek-flash'}), patch('main.ocr_via_provider', return_value='整页识别结果') as ocr:
+        assert ocr_pdf_page_image('/tmp/page.png') == '整页识别结果'
+        assert ocr.call_args.args[1].provider_code == 'deepseek'

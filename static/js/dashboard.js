@@ -6,6 +6,7 @@
     'use strict';
 
     const numberFormatter = new Intl.NumberFormat('zh-CN');
+    const STATS_UTC_OFFSET_MS = 8 * 60 * 60 * 1000;
 
     function escapeText(value) {
         if (window.MathBankSafe && typeof window.MathBankSafe.escapeText === 'function') {
@@ -43,7 +44,8 @@
 
     function monthAdditionCount(dailyAdds) {
         if (!dailyAdds || typeof dailyAdds !== 'object') return 0;
-        const monthKey = new Date().toISOString().slice(0, 7);
+        // /api/stats groups daily_adds by UTC+8, independent of browser timezone.
+        const monthKey = new Date(Date.now() + STATS_UTC_OFFSET_MS).toISOString().slice(0, 7);
         return Object.entries(dailyAdds).reduce((total, [dateKey, count]) => {
             return dateKey.startsWith(monthKey) ? total + (Number(count) || 0) : total;
         }, 0);
@@ -58,10 +60,10 @@
             container.innerHTML = `
                 <div class="ui-state ui-state-empty">
                     <span class="ui-state-icon" aria-hidden="true"><i class="fa-solid fa-clipboard-list"></i></span>
-                    <strong class="ui-state-title">还没有进行中的任务</strong>
+                    <strong class="ui-state-title">还没有保存的试卷</strong>
                     <span class="ui-state-description">可以从右侧快速开始导入试卷、录入题目或创建试卷草稿。</span>
                     <button type="button" class="ui-state-action dashboard-state-action" onclick="selectWorkspace('import', '导入中心')">
-                        <i class="fa-solid fa-plus" aria-hidden="true"></i><span>新建任务</span>
+                        <i class="fa-solid fa-plus" aria-hidden="true"></i><span>导入试卷</span>
                     </button>
                 </div>`;
             return;
@@ -80,12 +82,8 @@
                             <strong>${title}</strong>
                             <span>已保存 ${count} 题 · ${date}</span>
                         </div>
-                        ${canResume ? `<button type="button" class="dashboard-task-resume" onclick="resumeSavedPaper(${paperId})">继续编排</button>` : ''}
+                        ${canResume ? `<button type="button" class="dashboard-task-resume" onclick="resumeSavedPaper(${paperId})">继续编辑</button>` : ''}
                     </div>
-                    <div class="dashboard-task-progress-row">
-                        <span>试卷草稿已保存</span><strong>100%</strong>
-                    </div>
-                    <div class="dashboard-progress-track" aria-hidden="true"><span style="width:100%"></span></div>
                 </article>`;
         }).join('');
     }
@@ -173,9 +171,9 @@
             setText('dashboardQuestionTotal', formatCount(stats.total_count));
             setText('dashboardQuestionTotalMeta', `当前本地题库 · ${formatCount(stats.normal_count)} 道常规题`);
             setText('dashboardReviewCount', formatCount(stats.easy_error_count));
-            setText('dashboardReviewMeta', '易错题可返回题库复核');
+            setText('dashboardReviewMeta', '按题目属性统计');
             setText('dashboardPaperCount', formatCount(papers.length));
-            setText('dashboardPaperMeta', papers.length ? '可从试卷记录继续编排' : '还没有保存的试卷');
+            setText('dashboardPaperMeta', papers.length ? '可从试卷记录继续编辑' : '还没有保存的试卷');
             setText('dashboardMonthAdditions', formatCount(monthlyAdds));
             setText('dashboardMonthMeta', monthlyAdds ? '本月新增题目' : '本月暂无新增题目');
             renderTaskList(papers);

@@ -17,6 +17,17 @@ _VALID_REASONING_EFFORTS = frozenset(
 )
 
 
+def _normalize_deepseek_model(model_name: str) -> str:
+    """Use the current official Flash ID without rewriting other providers."""
+    if model_name.lower() in {"deepseek-v4-flash", "deepseek-v4-flash-vision-exp"}:
+        return "deepseek-flash"
+    return model_name
+
+
+def _deepseek_supports_images(model_name: str) -> bool:
+    return _normalize_deepseek_model(model_name).lower() == "deepseek-flash"
+
+
 def build_chat_completions_url(api_base: Optional[str]) -> Optional[str]:
     """Normalize an OpenAI-compatible base URL to its chat endpoint."""
 
@@ -173,16 +184,18 @@ def apply_model_thinking_policy(
         return result
 
     if (code == "deepseek" or host == "api.deepseek.com") and re.fullmatch(
-        r"deepseek-v4-(?:pro|flash)(?:-\d+)?", model
+        r"deepseek-(?:flash|v4-(?:pro|flash(?:-vision-exp)?))(?:-\d+)?", model
     ):
         result.pop("enable_thinking", None)
+        result.pop("thinking_budget", None)
         result["thinking"] = {"type": "enabled" if enabled else "disabled"}
         if not enabled:
             result.pop("reasoning_effort", None)
+            result.pop("top_p", None)
         elif result.get("reasoning_effort") in {"medium", "xhigh"}:
             result["reasoning_effort"] = "high"
         if enabled:
-            for key in ("temperature", "top_p", "presence_penalty", "frequency_penalty"):
+            for key in ("temperature", "presence_penalty", "frequency_penalty"):
                 result.pop(key, None)
         return result
 
@@ -367,6 +380,8 @@ def resolve_text_provider(
         spec = _PROVIDER_SPECS["DEEPSEEK"]
 
     model_name, reasoning_effort = parse_model_and_effort(model_name)
+    if spec.code == "deepseek":
+        model_name = _normalize_deepseek_model(model_name)
 
     api_base = spec.default_api_base
     if spec.api_base_env:
@@ -402,6 +417,23 @@ def resolve_ocr_provider(
 
     environment = os.environ if environ is None else environ
     normalized_engine = str(engine or "siliconflow").strip().lower()
+
+    if normalized_engine == "deepseek":
+        model_name, reasoning_effort = parse_model_and_effort(
+            environment.get("DEEPSEEK_OCR_MODEL") or "deepseek-flash"
+        )
+        model_name = _normalize_deepseek_model(model_name)
+        return MultimodalProviderConfig(
+            provider_code="deepseek",
+            provider_label="DeepSeek",
+            api_key_env="DEEPSEEK_API_KEY",
+            api_key=environment.get("DEEPSEEK_API_KEY"),
+            api_base=environment.get("DEEPSEEK_API_BASE") or "https://api.deepseek.com",
+            model_name=model_name,
+            reasoning_effort=reasoning_effort,
+            supports_image_input=_deepseek_supports_images(model_name),
+            raw_config=normalized_engine,
+        )
 
     if normalized_engine in {"ali_bailian", "bailian"}:
         return MultimodalProviderConfig(
@@ -486,7 +518,9 @@ def resolve_ocr_fallbacks(
 
     environment = os.environ if environ is None else environ
     preferred = str(preferred_engine or "siliconflow").strip().lower()
-    if preferred == "siliconflow":
+    if preferred == "deepseek":
+        engine_order = ["deepseek", "siliconflow", "ali_bailian", "zhongzhan_gpt"]
+    elif preferred == "siliconflow":
         engine_order = ["siliconflow", "ali_bailian", "zhongzhan_gpt"]
     elif preferred in {"ali_bailian", "bailian"}:
         engine_order = ["ali_bailian", "siliconflow", "zhongzhan_gpt"]
@@ -518,6 +552,7 @@ def resolve_draw_provider(
     if normalized_prefix == "ZHONGZHAN":
         normalized_prefix = "ZHONGZHAN_GPT"
     known_prefixes = {
+        "DEEPSEEK",
         "BAILIAN",
         "SILICONFLOW",
         "ZHONGZHAN_GPT",
@@ -526,11 +561,16 @@ def resolve_draw_provider(
     if normalized_prefix in known_prefixes:
         spec = _PROVIDER_SPECS[normalized_prefix]
         model_name = configured_model
+    elif not separator and raw_config.lower().startswith("deepseek-"):
+        spec = _PROVIDER_SPECS["DEEPSEEK"]
+        model_name = raw_config
     else:
         spec = _PROVIDER_SPECS["SILICONFLOW"]
         model_name = raw_config
 
     model_name, reasoning_effort = parse_model_and_effort(model_name)
+    if spec.code == "deepseek":
+        model_name = _normalize_deepseek_model(model_name)
     key_env = spec.api_key_env
     api_key = environment.get(key_env)
     api_base = (
@@ -555,8 +595,11 @@ def resolve_draw_provider(
         "ZHONGZHAN_CLAUDE",
     }
 
-    supports_image_input = force_multimodal or any(
-        marker in model_name.lower() for marker in ("vl", "thinking")
+    supports_image_input = (
+        _deepseek_supports_images(model_name) if spec.code == "deepseek"
+        else force_multimodal or any(
+            marker in model_name.lower() for marker in ("vl", "thinking")
+        )
     )
     return MultimodalProviderConfig(
         provider_code=spec.code,

@@ -1213,7 +1213,7 @@ def test_static_dialogs_expose_modal_semantics_and_accessible_names():
     assert workspace_button["aria-haspopup"] == "menu"
     assert workspace_button["aria-expanded"] == "false"
     assert workspace_button["aria-label"]
-    for button_id in ("toggleSidebarBtn", "themeDropdownBtn", "darkModeBtn", "statsOpenBtn"):
+    for button_id in ("themeDropdownBtn", "darkModeBtn", "statsOpenBtn"):
         assert elements[button_id]["aria-label"]
 
 
@@ -1443,6 +1443,69 @@ def test_dashboard_workspace_reuses_read_only_metrics_and_existing_workflows():
     assert "classList.remove('init-ws-dashboard', 'init-ws-paper')" in paper_source
 
 
+def test_dashboard_monthly_counts_follow_backend_beijing_dates():
+    import os
+
+    node = shutil.which("node")
+    assert node, "Node.js is required for the frontend executable regression"
+    script = r'''
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const dailyAdds = {
+  '2026-09-30': 9, '2026-10-01': 2,
+  '2026-12-31': 5, '2027-01-01': 3
+};
+const cases = [
+  ['2026-09-30T23:59:59+08:00', 9],
+  ['2026-10-01T00:00:00+08:00', 2],
+  ['2026-10-01T07:59:59+08:00', 2],
+  ['2026-10-01T08:00:00+08:00', 2],
+  ['2026-12-31T23:59:59+08:00', 5],
+  ['2027-01-01T00:00:00+08:00', 3]
+];
+(async () => {
+  for (const [instant, expected] of cases) {
+    const now = Date.parse(instant);
+    class FixedDate extends Date {
+      constructor(...args) { super(...(args.length ? args : [now])); }
+      static now() { return now; }
+    }
+    const nodes = new Map();
+    const document = {
+      getElementById(id) {
+        if (!nodes.has(id)) nodes.set(id, {
+          textContent: '', innerHTML: '', setAttribute() {}, removeAttribute() {}
+        });
+        return nodes.get(id);
+      },
+      addEventListener() {}
+    };
+    const context = vm.createContext({
+      window: {}, document, Date: FixedDate, Intl, console,
+      fetch: async url => ({
+        ok: true,
+        json: async () => url === '/api/stats'
+          ? {status:'success', total_count:19, daily_adds:dailyAdds}
+          : {status:'success', data:[]}
+      })
+    });
+    vm.runInContext(source, context);
+    await context.window.loadDashboardData();
+    assert.equal(nodes.get('dashboardMonthAdditions').textContent, String(expected), instant);
+    assert.ok(nodes.get('dashboardActivityList').innerHTML.includes(`本月新增题目 ${expected} 道`), instant);
+  }
+})().catch(error => { console.error(error); process.exitCode = 1; });
+'''
+    for timezone in ("UTC", "Asia/Shanghai", "America/Los_Angeles"):
+        result = subprocess.run(
+            [node, "-e", script, str(STATIC_JS_DIR / "dashboard.js")],
+            env=dict(os.environ, TZ=timezone), text=True, capture_output=True, timeout=10,
+        )
+        assert result.returncode == 0, f"{timezone}: {result.stderr}"
+
+
 def test_saved_paper_records_reuses_existing_actions_in_a_dedicated_workspace():
     elements = _index_elements()
     index_source = _read(INDEX_PATH)
@@ -1559,18 +1622,18 @@ def test_smart_paper_studio_uses_clear_peer_panels_without_replacing_workflows()
     for element_id in (
         "paperWorkspaceSection",
         "paperFilterSection",
-        "togglePaperFilterBtn",
-        "paperFilterToggleIcon",
-        "paperFilterToggleTxt",
         "paperQuestionStream",
         "paperSplitResizer",
         "paperCanvasSection",
     ):
         assert element_id in elements
 
+    for control_id in ("togglePaperFilterBtn", "paperFilterToggleIcon", "paperFilterToggleTxt", "togglePaperMetaBtn"):
+        assert f'id="{control_id}"' in paper_source
+
     for marker in (
         "paper-studio-frame",
-        "paper-studio-header",
+        "workspace-command-panel",
         "paper-studio-body",
         "paper-library-column",
         "paper-config-panel",
@@ -1640,7 +1703,7 @@ def test_bank_browser_uses_detail_first_layout_and_card_based_editor_dialog():
         "bank-management-actions",
         "bank-filter-toolbar",
         "bank-library-panel",
-        "bank-library-heading",
+        "workspace-command-bar",
         "bank-question-pane",
         "bank-split-resizer",
         "bank-list-toolbar",
@@ -1663,7 +1726,7 @@ def test_bank_browser_uses_detail_first_layout_and_card_based_editor_dialog():
     assert 'role="separator"' in index_source
     assert 'aria-orientation="vertical"' in index_source
     assert "openQuestionEditorModal('classification')" in index_source
-    assert index_source.index('class="bank-management-header"') < index_source.index('class="bank-filter-toolbar"')
+    assert index_source.index('class="bank-management-header') < index_source.index('class="bank-filter-toolbar"')
     assert index_source.index('class="bank-filter-toolbar"') < index_source.index('id="sidebarSection"')
     assert "bank-question-card" in editor_source
     assert "bank-question-excerpt" in editor_source

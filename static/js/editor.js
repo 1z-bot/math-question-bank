@@ -15,7 +15,7 @@ let bankQuestionsRetryTimer = null;
 
             const minRatio = Number(resizer1.getAttribute('aria-valuemin')) || 34;
             const maxRatio = Number(resizer1.getAttribute('aria-valuemax')) || 72;
-            const defaultRatio = 58;
+            const defaultRatio = 45;
             let isDragging = false;
 
             function setBankSplitRatio(value, { notify = false } = {}) {
@@ -178,6 +178,7 @@ let bankQuestionsRetryTimer = null;
                 figure_align_custom: Boolean(snapshot.figure_align_custom),
                 tags: snapshot.tags
             };
+            if (typeof refreshEditorFeedback === 'function') refreshEditorFeedback();
         }
         window.backupEditorState = backupEditorState;
 
@@ -480,11 +481,81 @@ let bankQuestionsRetryTimer = null;
             }
         }
 
+
+        function refreshEditorFeedback() {
+            const status = document.getElementById('editorSaveStatus');
+            const hint = document.getElementById('editorValidationHint');
+            if (!status || !hint) return;
+            const missing = [];
+            const modal = document.getElementById('editorSection');
+            [['editContent', '题干'], ['editCompulsory', '学段'], ['editChapter', '章节']].forEach(([id, label]) => {
+                const input = document.getElementById(id);
+                if (!input) return;
+                const empty = !input.value.trim();
+                if (empty) missing.push(label);
+                input.setAttribute('aria-invalid', empty && modal.dataset.validationAttempted === 'true' ? 'true' : 'false');
+            });
+            status.textContent = typeof isQuestionSaveInFlight === 'function' && isQuestionSaveInFlight()
+                ? '正在保存…' : isEditorModified() ? '有未保存的修改' : EditorState.questionId ? '已保存' : '新题目 · 尚未入库';
+            hint.textContent = missing.length ? `保存前请补充：${missing.join('、')}。带 * 的项目为必填项。` : '必填信息已齐全，可以保存。';
+            hint.classList.toggle('is-complete', missing.length === 0);
+        }
+        window.refreshEditorFeedback = refreshEditorFeedback;
+        function updateBankFilterSummary() {
+            const button = document.querySelector('.bank-filter-toggle');
+            const clear = document.getElementById('clearBankFiltersBtn');
+            if (!button || !clear) return;
+            const selected = ['filterCompulsory', 'filterChapter', 'filterKnowledge', 'filterType', 'filterDifficulty', 'filterSource']
+                .map(id => document.getElementById(id)).filter(element => element && element.value);
+            button.textContent = selected.length ? `筛选 (${selected.length})` : '筛选';
+            button.setAttribute('data-tooltip', selected.map(element => element.tagName === 'SELECT' ? element.selectedOptions[0]?.textContent : element.value).join(' / ') || '按学段、章节、小节等条件筛选');
+            clear.hidden = selected.length === 0;
+        }
+        function clearBankFilters() {
+            ['filterCompulsory', 'filterChapter', 'filterKnowledge', 'filterType', 'filterDifficulty', 'filterSource'].forEach(id => {
+                const element = document.getElementById(id);
+                if (element) element.value = '';
+            });
+            document.getElementById('clearFilterSourceBtn')?.classList.add('hidden');
+            const reload = document.getElementById('filterCompulsory')?.onchange;
+            if (typeof reload === 'function') reload();
+            else {
+                currentBankPage = currentDraftPage = 1;
+                if (activeSidebarTab === 'bank') loadQuestions(); else loadDrafts();
+            }
+        }
+        window.clearBankFilters = clearBankFilters;
+        function toggleBankFilters(button) {
+            const fields = document.getElementById('bankFilterFields');
+            const open = fields.classList.toggle('is-open');
+            button.setAttribute('aria-expanded', String(open));
+            document.getElementById('bankWorkspaceSection').classList.toggle('bank-filters-open', open);
+        }
+        function showBankDetail() {
+            if (!window.matchMedia('(max-width: 960px)').matches || (window.PaperStore && window.PaperStore.activeWorkspace !== 'bank')) return;
+            document.getElementById('bankWorkspaceSection').classList.add('bank-detail-open');
+            const back = document.querySelector('.bank-detail-back');
+            if (back) back.focus({preventScroll: true});
+        }
+        function closeBankDetail() {
+            document.getElementById('bankWorkspaceSection').classList.remove('bank-detail-open');
+        }
+        window.toggleBankFilters = toggleBankFilters;
+        window.showBankDetail = showBankDetail;
+        window.closeBankDetail = closeBankDetail;
+        document.addEventListener('input', event => {
+            if (event.target.closest && event.target.closest('#editorSection')) refreshEditorFeedback();
+        });
+        document.addEventListener('change', event => {
+            if (event.target.closest && event.target.closest('#editorSection')) refreshEditorFeedback();
+        });
+
         let questionEditorRestoreFocus = null;
 
         function switchQuestionEditorPanel(panelId) {
             const validPanels = ['classification', 'content', 'answer'];
             const targetPanel = validPanels.includes(panelId) ? panelId : 'classification';
+            document.getElementById('editorSection').dataset.panel = targetPanel;
 
             document.querySelectorAll('[data-editor-panel]').forEach(panel => {
                 const isActive = panel.dataset.editorPanel === targetPanel;
@@ -545,9 +616,12 @@ let bankQuestionsRetryTimer = null;
 
             requestAnimationFrame(() => {
                 const activeStep = modal.querySelector('[data-editor-panel-target].active');
-                if (activeStep) activeStep.focus({ preventScroll: true });
+                const title = document.getElementById('editorTitle');
+                if (title) { title.tabIndex = -1; title.focus({ preventScroll: true }); }
             });
             delete modal.dataset.allowNewQuestion;
+            delete modal.dataset.validationAttempted;
+            refreshEditorFeedback();
         }
 
         function finishCloseQuestionEditorModal() {
@@ -566,7 +640,7 @@ let bankQuestionsRetryTimer = null;
         function restoreEditorAfterDiscard() {
             if (!originalQuestionState) return;
             if (originalQuestionState.id && typeof selectQuestion === 'function') {
-                selectQuestion({ id: originalQuestionState.id });
+                selectQuestion({ id: originalQuestionState.id }, { silent: true });
                 return;
             }
             if (originalQuestionState.draftId) {
@@ -588,7 +662,7 @@ let bankQuestionsRetryTimer = null;
             checkAndSwitch(() => {
                 finishCloseQuestionEditorModal();
                 if (isNewQuestionMode && Number.isSafeInteger(returnQuestionId) && returnQuestionId > 0) {
-                    selectQuestion({ id: returnQuestionId });
+                    selectQuestion({ id: returnQuestionId }, { silent: true });
                 } else if (shouldRestore) {
                     restoreEditorAfterDiscard();
                 }
@@ -616,7 +690,8 @@ let bankQuestionsRetryTimer = null;
                         modal.dataset.returnQuestionId = String(returnQuestionId);
                     }
                 }
-                openQuestionEditorModal('classification');
+                openQuestionEditorModal('content');
+                if (typeof switchContentTab === 'function') switchContentTab('manual');
                 setQuestionDetailEditAvailability(false);
             });
         }
@@ -757,8 +832,8 @@ let bankQuestionsRetryTimer = null;
             
             // Populate form fields
             document.getElementById('editContent').value = draft.content || '';
-            document.getElementById('editQType').value = draft.question_type || 'single_choice';
-            document.getElementById('editDifficulty').value = draft.difficulty || 'easy_error';
+            setEditorMetadataValue(document.getElementById('editQType'), draft.question_type || 'single_choice');
+            setEditorMetadataValue(document.getElementById('editDifficulty'), draft.difficulty || 'easy_error');
             document.getElementById('editSource').value = draft.source || '';
             document.getElementById('editAnswerMarkdown').value = draft.answer_markdown || '';
             document.getElementById('editReview').value = draft.review || '';
@@ -852,12 +927,14 @@ let bankQuestionsRetryTimer = null;
         }
 
         function loadDrafts() {
+            if (typeof updateBankFilterSummary === 'function') updateBankFilterSummary();
             const qListContainer = document.getElementById('questionsList');
             const q = document.getElementById('searchInput').value.trim().toLowerCase();
             const qtype = document.getElementById('filterType').value;
             const difficulty = document.getElementById('filterDifficulty').value;
             const compulsory = document.getElementById('filterCompulsory').value;
             const chapter = document.getElementById('filterChapter').value;
+            const knowledge = document.getElementById('filterKnowledge')?.value || '';
             const source = document.getElementById('filterSource') ? document.getElementById('filterSource').value.trim().toLowerCase() : '';
             
             let drafts = getLocalStorageDrafts();
@@ -882,6 +959,8 @@ let bankQuestionsRetryTimer = null;
                 drafts = drafts.filter(item => item.category_chapter === chapter);
             }
             
+            if (knowledge) drafts = drafts.filter(item => item.category_knowledge === knowledge);
+
             // Filter by source
             if (source) {
                 drafts = drafts.filter(item => (item.source || '').toLowerCase().includes(source));
@@ -1375,57 +1454,45 @@ let bankQuestionsRetryTimer = null;
         function populateFilterDropdowns() {
             const compSelect = document.getElementById('filterCompulsory');
             const chapSelect = document.getElementById('filterChapter');
-            
-            if (!compSelect || !chapSelect) return;
-            if (!categoryTree || typeof categoryTree !== 'object') {
-                console.warn('[Security Shield] 分类数据未准备完毕，跳过过滤框分类级联填充');
-                return;
+            const knowSelect = document.getElementById('filterKnowledge');
+            if (!compSelect || !chapSelect || !knowSelect || !categoryTree || typeof categoryTree !== 'object') return;
+            const previous = [compSelect.value, chapSelect.value, knowSelect.value];
+            function fill(select, values, placeholder, selected = '') {
+                select.innerHTML = '<option value="">' + placeholder + '</option>' + values.map(value =>
+                    `<option value="${window.MathBankSafe.escapeAttribute(value)}">${window.MathBankSafe.escapeText(value)}</option>`).join('');
+                select.value = values.includes(selected) ? selected : '';
             }
-            
-            compSelect.innerHTML = '<option value="">所有学段/必选修</option>';
-            Object.keys(categoryTree).forEach(c => {
-                compSelect.innerHTML += `<option value="${window.MathBankSafe.escapeAttribute(c)}">${window.MathBankSafe.escapeText(c)}</option>`;
-            });
-            
-            compSelect.onchange = () => {
-                const comp = compSelect.value;
-                chapSelect.innerHTML = '<option value="">所有章节</option>';
-                
-                if (comp && categoryTree[comp]) {
-                    chapSelect.classList.remove('hidden');
-                    Object.keys(categoryTree[comp]).forEach(ch => {
-                        chapSelect.innerHTML += `<option value="${window.MathBankSafe.escapeAttribute(ch)}">${window.MathBankSafe.escapeText(ch)}</option>`;
-                    });
-                } else {
-                    chapSelect.classList.add('hidden');
-                }
-                
-                // Reset page numbers
+            function fillKnowledge(selected = '') {
+                const values = categoryTree[compSelect.value]?.[chapSelect.value];
+                fill(knowSelect, Array.isArray(values) ? values : [], chapSelect.value ? '所有小节' : '先选择章节', selected);
+                knowSelect.disabled = !Array.isArray(values);
+                knowSelect.classList.remove('hidden');
+            }
+            function fillChapters(chapter = '', knowledge = '') {
+                const chapters = categoryTree[compSelect.value];
+                fill(chapSelect, chapters ? Object.keys(chapters) : [], chapters ? '所有章节' : '先选择学段', chapter);
+                chapSelect.disabled = !chapters;
+                chapSelect.classList.remove('hidden');
+                fillKnowledge(knowledge);
+            }
+            function reload() {
                 currentBankPage = 1;
                 currentDraftPage = 1;
-                
-                if (activeSidebarTab === 'bank') {
-                    loadQuestions(); // Refilter
-                } else {
-                    loadDrafts(); // Refilter
-                }
-            };
-            
-            chapSelect.onchange = () => {
-                // Reset page numbers
-                currentBankPage = 1;
-                currentDraftPage = 1;
-                
-                if (activeSidebarTab === 'bank') {
-                    loadQuestions(); // Refilter
-                } else {
-                    loadDrafts(); // Refilter
-                }
-            };
+                updateBankFilterSummary();
+                if (activeSidebarTab === 'bank') loadQuestions();
+                else loadDrafts();
+            }
+            fill(compSelect, Object.keys(categoryTree), '所有学段', previous[0]);
+            fillChapters(previous[1], previous[2]);
+            compSelect.onchange = () => { fillChapters(); reload(); };
+            chapSelect.onchange = () => { fillKnowledge(); reload(); };
+            knowSelect.onchange = reload;
+            updateBankFilterSummary();
         }
 
         // Load and List Saved Questions
         function loadQuestions(retryCount = 0) {
+            if (typeof updateBankFilterSummary === 'function') updateBankFilterSummary();
             const loadSequence = ++bankQuestionsLoadSequence;
             if (bankQuestionsRetryTimer) {
                 clearTimeout(bankQuestionsRetryTimer);
@@ -1444,6 +1511,7 @@ let bankQuestionsRetryTimer = null;
             const difficulty = document.getElementById('filterDifficulty').value;
             const compulsory = document.getElementById('filterCompulsory').value;
             const chapter = document.getElementById('filterChapter').value;
+            const knowledge = document.getElementById('filterKnowledge')?.value || '';
             const source = document.getElementById('filterSource') ? document.getElementById('filterSource').value : '';
             const sortOrder = document.getElementById('filterSort') ? document.getElementById('filterSort').value : 'desc';
             const requestedPage = Math.max(1, currentBankPage);
@@ -1454,6 +1522,7 @@ let bankQuestionsRetryTimer = null;
             if (difficulty) params.append('difficulty', difficulty);
             if (compulsory) params.append('compulsory', compulsory);
             if (chapter) params.append('chapter', chapter);
+            if (knowledge) params.append('knowledge', knowledge);
             if (source) params.append('source', source);
             params.append('page', String(requestedPage));
             params.append('page_size', String(PAGE_LIMIT));
@@ -1547,7 +1616,7 @@ let bankQuestionsRetryTimer = null;
                             <div class="bank-question-card-header flex items-start justify-between">
                                 <span class="bank-question-type text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-500 shrink-0 mt-0.5">${window.MathBankSafe.escapeText(typeText)}</span>
                                 <div class="bank-question-badges flex items-center gap-1.5 justify-end flex-wrap flex-1 ml-2">
-                                    ${tagsHtml}
+                                    <div class="bank-question-tags">${tagsHtml}</div>
                                     ${difficultyBadge}
                                     <span class="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-brand-50 text-brand-600 shadow-sm">#${window.MathBankSafe.escapeText(item.seq_num)}</span>
                                     <!-- Delete Button -->
@@ -1557,14 +1626,10 @@ let bankQuestionsRetryTimer = null;
                                 </div>
                             </div>
                             <div class="bank-question-excerpt text-xs text-slate-700 leading-relaxed font-medium line-clamp-2 card-formula-render">${cleanContent || '[空白题干]'}</div>
-                            <!-- Time Badge -->
-                            <div class="bank-question-time text-[8px] text-slate-400/80 flex items-center space-x-1 py-0.5">
-                                <i class="fa-regular fa-clock text-[8px]"></i>
-                                <span>录入：${window.MathBankSafe.escapeText(formatChineseDate(item.created_at))}</span>
-                            </div>
                             <div class="bank-question-meta flex justify-between items-center text-[9px] text-slate-400 border-t pt-1.5">
                                 <span class="truncate max-w-[120px] font-semibold"><i class="fa-solid fa-folder-open mr-0.5"></i>${window.MathBankSafe.escapeText(item.category_knowledge || item.category_chapter || '未分类')}</span>
                                 <span class="font-mono text-slate-400">${window.MathBankSafe.escapeText(item.source ? item.source.substring(0, 12) : '本地录入')}</span>
+                                <time class="bank-question-time" title="录入于 ${window.MathBankSafe.escapeText(formatChineseDate(item.created_at))}">${window.MathBankSafe.escapeText(String(item.created_at || '').slice(0, 10))}</time>
                             </div>
                         `;
                         
@@ -1657,70 +1722,19 @@ let bankQuestionsRetryTimer = null;
             
             const totalPages = Math.ceil(totalItems / PAGE_LIMIT) || 1;
             
-            // Build pages array with sliding window folding
-            let pages = [];
-            if (totalPages <= 5) {
-                for (let i = 1; i <= totalPages; i++) {
-                    pages.push(i);
-                }
-            } else {
-                pages.push(1);
-                
-                let start = Math.max(2, currentPage - 1);
-                let end = Math.min(totalPages - 1, currentPage + 1);
-                
-                if (currentPage <= 3) {
-                    end = 4;
-                }
-                if (currentPage >= totalPages - 2) {
-                    start = totalPages - 3;
-                }
-                
-                if (start > 2) {
-                    pages.push('...');
-                }
-                
-                for (let i = start; i <= end; i++) {
-                    pages.push(i);
-                }
-                
-                if (end < totalPages - 1) {
-                    pages.push('...');
-                }
-                
-                pages.push(totalPages);
+            if (totalPages <= 1) {
+                container.innerHTML = '';
+                container.style.display = 'none';
+                return;
             }
-            
-            let pagesHtml = '';
-            pages.forEach(p => {
-                if (p === '...') {
-                    pagesHtml += `<span class="pagination-ellipsis">...</span>`;
-                } else {
-                    pagesHtml += `<button class="pagination-btn ${p === currentPage ? 'active' : ''}" onclick="goToSidebarPage(${p}, '${tabType}')">${p}</button>`;
-                }
-            });
-            
             container.innerHTML = `
-                <div class="flex items-center justify-between text-[10px] text-slate-400 font-semibold px-0.5">
-                    <span>共 ${totalItems} 题 / ${totalPages} 页</span>
-                    <div class="flex items-center space-x-1">
-                        <span>跳转至</span>
-                        <input type="number" min="1" max="${totalPages}" value="${currentPage}" class="pagination-jump-input" onkeydown="if(event.key==='Enter') jumpToSidebarPage(this.value, ${totalPages}, '${tabType}')">
-                        <span>页</span>
-                    </div>
-                </div>
-                <div class="sidebar-pagination-controls flex items-center justify-center space-x-1">
-                    <button class="pagination-btn pagination-btn-nav" ${currentPage === 1 ? 'disabled' : ''} onclick="goToSidebarPage(${currentPage - 1}, '${tabType}')">
-                        <i class="fa-solid fa-chevron-left text-[9px] mr-0.5"></i>上一页
-                    </button>
-                    ${pagesHtml}
-                    <button class="pagination-btn pagination-btn-nav" ${currentPage === totalPages ? 'disabled' : ''} onclick="goToSidebarPage(${currentPage + 1}, '${tabType}')">
-                        下一页<i class="fa-solid fa-chevron-right text-[9px] ml-0.5"></i>
-                    </button>
-                </div>
-            `;
+                <div class="sidebar-pagination-controls flex items-center justify-between">
+                    <button class="pagination-btn pagination-btn-nav" ${currentPage === 1 ? 'disabled' : ''} onclick="goToSidebarPage(${currentPage - 1}, '${tabType}')">上一页</button>
+                    <label class="pagination-page-label">第 <input type="number" aria-label="跳转页码" min="1" max="${totalPages}" value="${currentPage}" class="pagination-jump-input" onkeydown="if(event.key==='Enter') jumpToSidebarPage(this.value, ${totalPages}, '${tabType}')"> / ${totalPages} 页</label>
+                    <button class="pagination-btn pagination-btn-nav" ${currentPage === totalPages ? 'disabled' : ''} onclick="goToSidebarPage(${currentPage + 1}, '${tabType}')">下一页</button>
+                </div>`;
         }
-        
+
         function goToSidebarPage(page, tabType) {
             if (tabType === 'bank') {
                 currentBankPage = page;
@@ -1771,7 +1785,7 @@ let bankQuestionsRetryTimer = null;
                 : '<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-200 text-slate-500">编号：新题目</span>';
 
             const createdAtBadge = EditorState.createdAt
-                ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 inline-flex items-center"><i class="fa-regular fa-clock mr-1"></i>录入于：${escapeEditorMetaText(formatChineseDate(EditorState.createdAt))}</span>`
+                ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 inline-flex items-center"><i class="fa-regular fa-clock mr-1"></i>${escapeEditorMetaText(String(EditorState.createdAt).slice(0, 10))}</span>`
                 : '';
 
             let paperTagsHtml = '';
@@ -1811,7 +1825,11 @@ let bankQuestionsRetryTimer = null;
         function choicesGridOverflows(grid) {
             return Array.from(grid.children).some(item => {
                 const content = item.querySelector('.choices-content') || item;
-                return content.scrollWidth > content.clientWidth + 1;
+                const imageMinWidth = grid.closest('.paper-choice-options-row') ? 100 : 140;
+                const imageTooSmall = Array.from(content.querySelectorAll('img')).some(img =>
+                    Math.min(img.naturalWidth, imageMinWidth) > content.clientWidth + 1
+                );
+                return imageTooSmall || content.scrollWidth > content.clientWidth + 1;
             });
         }
 
@@ -1844,6 +1862,11 @@ let bankQuestionsRetryTimer = null;
 
             grids.forEach(grid => {
                 adaptSingleChoicesGrid(grid);
+                grid.querySelectorAll('img').forEach(img => {
+                    if (!img.complete) {
+                        img.addEventListener('load', () => adaptSingleChoicesGrid(grid), { once: true });
+                    }
+                });
                 if (typeof ResizeObserver !== 'undefined' && !choicesGridResizeObservers.has(grid)) {
                     const observer = new ResizeObserver(() => {
                         window.requestAnimationFrame(() => adaptSingleChoicesGrid(grid));
@@ -2286,8 +2309,13 @@ let bankQuestionsRetryTimer = null;
                 const items = inner.split(/\\item/).map(item => item.trim()).filter(item => item.length > 0);
                 const labels = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
                 let maxLen = 0;
+                const hasImages = items.some(item => /!\[[^\]]*\]\([^)]+\)/.test(item));
+                const fourImageOptions = items.length === 4 && items.every(item =>
+                    /^!\[[^\]]*\]\([^)]+\)$/.test(item.trim())
+                );
                 items.forEach(item => {
-                    const approxText = item.replace(/@@MATH_PLACEHOLDER_\d+@@/g, '********');
+                    const approxText = item.replace(/!\[[^\]]*\]\([^)]+\)/g, '')
+                        .replace(/@@MATH_PLACEHOLDER_\d+@@/g, '********');
                     if (approxText.length > maxLen) {
                         maxLen = approxText.length;
                     }
@@ -2296,12 +2324,12 @@ let bankQuestionsRetryTimer = null;
                 let gridCols = "grid-cols-4";
                 if (maxLen > 24) {
                     gridCols = "grid-cols-1";
-                } else if (maxLen > 10) {
+                } else if ((hasImages && !fourImageOptions) || maxLen > 10) {
                     gridCols = "grid-cols-2";
                 }
 
                 const preferredColumns = gridCols === 'grid-cols-1' ? 1 : (gridCols === 'grid-cols-2' ? 2 : 4);
-                let html = `<div class="grid ${gridCols} gap-2 my-2 select-none choices-grid items-baseline" data-preferred-columns="${preferredColumns}">`;
+                let html = `<div class="grid ${gridCols} gap-2 my-2 select-none choices-grid ${hasImages ? 'choices-has-images' : ''} items-baseline" data-preferred-columns="${preferredColumns}">`;
                 items.forEach((item, idx) => {
                     const label = labels[idx] || (idx + 1);
                     let cleanItem = item;
@@ -2309,7 +2337,7 @@ let bankQuestionsRetryTimer = null;
                     if (/\\(dfrac|frac|sqrt|cdot|times|pm|le|ge|ne|in|vec|mathbf|boldsymbol|mathrm|text|alpha|beta|gamma|delta|theta|pi|varphi|omega)\b/.test(cleanItem) && !/\$/.test(cleanItem)) {
                         cleanItem = '$' + cleanItem + '$';
                     }
-                    html += `<div class="choices-item flex items-baseline"><span class="choices-label font-bold mr-1.5 text-slate-800 shrink-0">${label}.</span><span class="choices-content flex-1 [&>p]:m-0 [&>p]:inline">${cleanItem}</span></div>`;
+                    html += `<div class="choices-item flex items-baseline"><span class="choices-label font-bold mr-1.5 text-slate-800 shrink-0">${label}.</span><div class="choices-content flex-1 [&>p]:m-0 [&>p]:inline">${cleanItem}</div></div>`;
                 });
                 html += '</div>';
                 return html;
