@@ -8,9 +8,9 @@
 
 No frontend build step is required. The Windows 10/11 x64 portable package includes Python and its matching app-local VC++ Runtime and runs after extraction. The macOS package does not include Python, so confirm that Python 3.10 or newer is installed on the Mac before launching it; the launcher automatically detects it and creates or repairs the isolated project `venv`. MathBank supports second-level real-time preview of LaTeX formulas and geometric figures, deeply integrated with one-click exam paper creation, A4 simulation canvas layout, Gaokao-level PDF exam paper export, DeepSeek AI problem solving, and one-click formula OCR recognition.
 
-![MathBank Question Bank Workbench](docs/images/screenshot1.png)
+![MathBank Home Dashboard (Ocean Blue Theme)](docs/images/screenshot1.png)
 
-![MathBank Exam Layout Workbench](docs/images/screenshot2.png)
+![MathBank Question Bank and Solution Preview (Ocean Blue Theme)](docs/images/screenshot2.png)
 
 ---
 
