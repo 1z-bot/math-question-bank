@@ -381,26 +381,43 @@ def test_pdf_ocr_fallbacks_respect_claude_preference():
     ]
 
 
-def test_draw_provider_strips_siliconflow_prefix_and_detects_images():
+@pytest.mark.parametrize("model", ["Qwen/Qwen3-VL-32B-Instruct", "Qwen/Qwen3.8-27B"])
+@pytest.mark.parametrize("prefix", ["SILICONFLOW/", ""])
+def test_draw_provider_strips_siliconflow_prefix_and_detects_images(model, prefix):
     config = resolve_draw_provider(
-        "SILICONFLOW/Qwen/Qwen3-VL-32B-Instruct",
+        prefix + model,
         {"SILICONFLOW_API_KEY": "sf-key"},
     )
 
     assert config.provider_code == "siliconflow"
-    assert config.model_name == "Qwen/Qwen3-VL-32B-Instruct"
+    assert config.model_name == model
     assert config.supports_image_input is True
     assert "sf-key" not in repr(config)
 
 
-def test_draw_provider_keeps_text_only_siliconflow_mode():
+@pytest.mark.parametrize("model", ["Qwen/Qwen3.5-397B-A17B", "Qwen/Qwen3.8-27B-custom"])
+def test_draw_provider_keeps_text_only_siliconflow_mode(model):
     config = resolve_draw_provider(
-        "Qwen/Qwen3.5-397B-A17B",
+        model,
         {"SILICONFLOW_API_KEY": "sf-key"},
     )
 
-    assert config.model_name == "Qwen/Qwen3.5-397B-A17B"
+    assert config.model_name == model
     assert config.supports_image_input is False
+
+
+def test_siliconflow_qwen38_ocr_preserves_selected_model_and_credentials():
+    config = resolve_ocr_provider("siliconflow", {
+        "SILICONFLOW_API_KEY": "sf-key",
+        "DEEPSEEK_API_KEY": "not-this-key",
+        "SILICONFLOW_OCR_MODEL": "Qwen/Qwen3.8-27B",
+    })
+
+    assert config.provider_code == "siliconflow"
+    assert config.model_name == "Qwen/Qwen3.8-27B"
+    assert config.api_key == "sf-key"
+    assert config.chat_completions_url == "https://api.siliconflow.cn/v1/chat/completions"
+    assert config.supports_image_input is True
 
 
 @pytest.mark.parametrize('model', ['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp'])

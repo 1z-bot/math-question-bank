@@ -23,6 +23,7 @@
 > [!IMPORTANT]
 > **本地版本号与发布权限边界**：
 > 全局系统版本号统一定义于 `mathbank/__init__.py` 的 `__version__`。AI 代理只按用户要求修改该本地版本号；仅在用户明确要求本地打包时运行 `scripts/build_release.py`，产物只保存在本地。Git Tag、GitHub Release、Release 草稿与附件上传全部由用户自行管理，AI 代理不得创建、移动、删除或推送 Tag，不得创建、编辑、发布或上传 GitHub Release。用户要求“同步到 GitHub”时，默认仅同步当前代码分支，不包含任何 Tag 或 Release 操作。
+> **本地更新后的自动重启**：完成用户要求的本地程序更新或版本号调整后，AI 代理应自行通过现有正常关闭与启动流程重启本项目服务，无需再次询问常规重启许可；保留未保存编辑，避免强制终止。重启后须等待 `/healthz` 就绪，并回读 `/api/version`，确认运行中的 `current_version` 与本地 `__version__` 一致后再报告更新完成。此规则用于代理执行更新后的收尾，不改变日常启动器复用已有服务的行为。
 
 > [!IMPORTANT]
 > **项目路径单一来源规则**：
@@ -182,10 +183,12 @@
 
 ## 4. 外部 API 接入规范
 - **密钥与鉴权**：读取 `.env` 密钥，修改类接口必须携带 `X-Local-Token` 头部。
+- **私有配置提交边界**：`.env`、`.env.*`（包括 `.env.bak`、`.env.production` 等副本）与 `.system_generated/` 必须由 Git 忽略，仅允许根目录不含真实密钥的 `.env.example` 配置模板入库。控制令牌泄露后须在服务停止时更换本地文件，再启动服务、刷新页面；添加忽略规则不能撤回历史提交中的凭据。
 - **模型配置**：
   - **思考参数按供应商与型号隔离**：所有 OCR（含 PDF 页面）、绘图、解答（含流式）、拆卷、分类、AI 选题与 LaTeX 诊断统一通过 `mathbank.ai_providers.apply_model_thinking_policy` 构造参数。`inject_reasoning_effort` 只添加明确选中的 `reasoning_effort`，禁止连带添加 `enable_thinking`。已识别 GPT 推理型号在官方与中转站均不发送 `enable_thinking` / `thinking` / `thinking_budget`，使用 `max_completion_tokens` 并省略采样参数；Astra 还省略 `logprobs` / `top_logprobs`。DeepSeek 官方 Flash / V4 Pro 使用 `thinking.type`，硅基流动已识别 DeepSeek V4/V3.2 使用 `enable_thinking`，关闭时不携带推理强度；硅基流动 Qwen3-VL-8B/32B-Instruct 不添加思考开关。百炼当前 Qwen 保留以下任务策略。其他自定义型号不猜测思考开关；中转站 Gemini 等别名（包括 `-high` / `-medium`）原样传递，不剥离后缀或静默改名。专项验证须覆盖官方 Astra、官方/中转站 Luna、两种 DeepSeek 接入方式、百炼与 Instruct 的请求参数隔离，模拟请求通过不能替代付费 API 实测。
   - **DeepSeek 官方接口**：当前预设使用 `deepseek-flash` 与 `deepseek-v4-pro`，其中仅 Flash 支持图像输入。默认公式识图新增 `deepseek` 引擎，使用现有 `DEEPSEEK_API_KEY`、可选 `DEEPSEEK_API_BASE` 与 `DEEPSEEK_OCR_MODEL`（默认 `deepseek-flash`）；单题及 PDF 识图统一经过供应商解析与思考策略，普通识图关闭思考，显式推理强度仍按现有规则生效。DeepSeek 官方的旧 `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` 配置兼容转换为 `deepseek-flash`，设置中的旧选项同步规范化；硅基流动和中转站的模型标识不得按官方别名改写。V4 Pro 保留文本解题/拆卷/分类/绘图能力，不作为识图预设，带图请求须校验图像能力。新 OCR 模型字段在旧客户端未传或切换其他识图平台时保留已有值，不能改写用户现有识图平台选择。
   - OCR 可选 DeepSeek Flash `deepseek-flash`，以及阿里百炼 `qwen3.7-flash` 或硅基流动 `Qwen/Qwen3-VL-8B-Instruct`（中转站推荐 `gpt-5.6-luna`）。
+  - **硅基流动 Qwen3.8-27B 预设**：`Qwen/Qwen3.8-27B` 可在解题、拆卷、分类、OCR 与 TikZ 绘图中选择；绘图供应商解析须按这一完整模型 ID 明确认可参考图输入，不能只依赖名称中的 `VL`，也不能推广到未经核实的 Qwen 型号。新增选项不改变既有默认模型或用户已保存选择，不套用百炼 Qwen 的思考参数。
   - OCR 提示词要求只输出转录，不输出代码块、前言或解释；无法确认的公式/符号标记 `[公式待核对]` 且不得猜补。选择题必须输出完整 `choices` 环境、去除原 A/B/C/D 标号；独立 `equation`/`align`/`gather`/`multline` 与 `tabular` 结构原样保留，`cases`/`aligned`/`array` 整体置于同一数学环境；多图/表内图只保留原位占位，不描述或重绘。
   - 阿里百炼预设按任务隔离：OCR、拆卷与分类默认 `qwen3.7-flash`，解答与绘图默认 `qwen3.7-plus`，`qwen3.8-max` 仅作为高性能可选项；旧型号不再列为预设，但既有配置与自定义模型必须继续可见且不得被静默改写。
   - **阿里百炼思考策略隔离**：仅对 `provider_code == "bailian"` 的 Qwen3.7/3.8 生效。OCR、拆卷、分类、AI 选题和 LaTeX 诊断显式关闭思考；解答服从前端开关；TikZ 绘图显式开启思考。Qwen3.7 使用 `thinking_budget`，Qwen3.8 Max 使用 `reasoning_effort=medium`，两者禁止同时发送；当前型号使用 `max_completion_tokens`，百炼专属规则不得应用到其他供应商。

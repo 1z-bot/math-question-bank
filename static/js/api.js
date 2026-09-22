@@ -775,6 +775,7 @@
             siliconflow: [
                 "Qwen/Qwen3-VL-32B-Instruct",
                 "Qwen/Qwen3-VL-8B-Instruct",
+                "Qwen/Qwen3.8-27B",
                 "deepseek-ai/DeepSeek-V4-Pro",
                 "deepseek-ai/DeepSeek-V4-Flash"
             ],

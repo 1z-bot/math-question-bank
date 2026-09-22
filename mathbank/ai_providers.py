@@ -597,7 +597,9 @@ def resolve_draw_provider(
 
     supports_image_input = (
         _deepseek_supports_images(model_name) if spec.code == "deepseek"
-        else force_multimodal or any(
+        else force_multimodal or (
+            spec.code == "siliconflow" and model_name.lower() == "qwen/qwen3.8-27b"
+        ) or any(
             marker in model_name.lower() for marker in ("vl", "thinking")
         )
     )
