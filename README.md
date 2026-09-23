@@ -2,6 +2,8 @@
 
 [中文](README.md) | [English](README_EN.md)
 
+📖 **使用帮助**：[MathBank 帮助网页](https://mathbank.pages.dev/)
+
 > **项目标签**：数学题库 | 高中数学 | 备课教研 | A4 仿真排版 | 智能组卷 | 高考级导出 | OCR 识图 | DeepSeek AI | 教育技术
 
 **MathBank** 是一个专为中学数学教师打造的、完全运行在您自己电脑上的轻量级半自动化数学题库与组卷排版工作台。

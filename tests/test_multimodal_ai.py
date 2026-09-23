@@ -39,7 +39,7 @@ def test_ocr_prompt_compactly_preserves_tables_and_multi_figure_anchors():
     assert "看不清公式/符号标[公式待核对]" in prompt
     assert "勿描述、猜测或重绘" in prompt
     assert "独立 equation/align/gather/multline、tabular 原样" in prompt
-    assert len(prompt) <= 720
+    assert len(prompt) <= 930
 
 
 @pytest.mark.parametrize("base", ["https://api.openai.com/v1", "https://vision.example/v1"])

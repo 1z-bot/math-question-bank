@@ -648,7 +648,7 @@
                             <p class="text-xs text-slate-400"><i class="fa-solid fa-circle-info"></i> 您可以直接在下方的题干编辑框中直接手写 LaTeX/Markdown 混合内容。配图可以直接上传插图进行定位。</p>
                             <div class="flex flex-wrap gap-1.5">
                                 <button type="button" class="text-[10px] bg-slate-100 text-slate-700 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('$x^2$')">$x^2$ (行内公式)</button>
-                                <button type="button" class="text-[10px] bg-slate-100 text-slate-700 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\frac{a}{b}')">$\frac{a}{b}$ (分数)</button>
+                                <button type="button" class="text-[10px] bg-slate-100 text-slate-700 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\dfrac{a}{b}')">$\dfrac{a}{b}$ (分数)</button>
                                 <button type="button" class="text-[10px] bg-slate-100 text-slate-700 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\sqrt{x}')">$\sqrt{x}$ (开根)</button>
                                 <button type="button" class="text-[10px] bg-slate-100 text-slate-700 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\triangle ABC')">$\triangle ABC$ (三角形)</button>
                                 <button type="button" class="text-[10px] bg-slate-100 text-slate-700 px-2.5 py-1 rounded-md cursor-pointer hover:bg-slate-200 font-mono" onclick="insertContentHelper('\\angle ABC')">$\angle ABC$ (角)</button>
@@ -664,7 +664,9 @@
                         <div class="flex justify-between items-center">
                             <label for="editContent" class="editor-field-label">题干</label>
                             <div class="flex items-center gap-2">
-
+                                <button type="button" id="normalizeContentFractionsBtn" onclick="normalizeEditorFractions('editContent', this)" class="inline-flex min-h-[44px] cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-500/30 disabled:opacity-50" data-tooltip="规范完整数学环境中的分式：主体放大，上下标与内层保持紧凑；核对预览后保存">
+                                    <i class="fa-solid fa-divide" aria-hidden="true"></i><span>规范分式</span>
+                                </button>
                                 <button type="button" id="openContentTikzWorkbenchBtn" onclick="openContentTikzWorkbench()" class="answer-tikz-entry inline-flex min-h-[44px] cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 shadow-sm transition-colors duration-200 hover:border-indigo-300 hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/30" data-tooltip="新增一幅题干 TikZ 绘图，不会覆盖已有绘图">
                                     <i class="fa-solid fa-compass-drafting" aria-hidden="true"></i>
                                     <span>新增绘图</span>
@@ -884,7 +886,9 @@
                         <div class="flex justify-between items-center">
                             <label for="editAnswerMarkdown" class="editor-field-label">答案与解析</label>
                             <div class="flex items-center gap-2">
-
+                                <button type="button" id="normalizeAnswerFractionsBtn" onclick="normalizeEditorFractions('editAnswerMarkdown', this)" class="inline-flex min-h-[44px] cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-500/30 disabled:opacity-50" data-tooltip="规范完整数学环境中的分式：主体放大，上下标与内层保持紧凑；核对预览后保存">
+                                    <i class="fa-solid fa-divide" aria-hidden="true"></i><span>规范分式</span>
+                                </button>
                                 <button type="button" id="openAnswerTikzWorkbenchBtn" onclick="openAnswerTikzWorkbench()" class="answer-tikz-entry inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 shadow-sm transition-colors duration-200 hover:border-indigo-300 hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 cursor-pointer" data-tooltip="新增一幅解答 TikZ 绘图，不会覆盖已有绘图">
                                     <i class="fa-solid fa-compass-drafting" aria-hidden="true"></i>
                                     <span>新增绘图</span>

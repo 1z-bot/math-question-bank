@@ -6,6 +6,55 @@ let bankQuestionsLoadController = null;
 let bankQuestionsLoadSequence = 0;
 let bankQuestionsRetryTimer = null;
 
+// Formatting operates on one editor snapshot; delayed replies cannot replace
+// newer typing or a different question/draft, and never advance the saved state.
+async function normalizeEditorFractions(target, button) {
+    if (!['editContent', 'editAnswerMarkdown'].includes(target)) return;
+    const input = document.getElementById(target);
+    if (!input || !button || button.disabled) return;
+    const source = input.value;
+    if (!source.trim()) {
+        showToast('请先输入需要规范分式的内容。', 'info');
+        return;
+    }
+    const session = EditorState.snapshot();
+    let edited = false;
+    const markEdited = () => { edited = true; };
+    input.addEventListener('input', markEdited);
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    try {
+        const form = new FormData();
+        form.append('text', source);
+        const response = await fetch('/api/format/fractions', { method: 'POST', body: form });
+        if (!response.ok) throw new Error('fraction formatting failed');
+        const result = await response.json();
+        if (!EditorState.isCurrent(session)) return;
+        if (edited || input.value !== source) {
+            showToast('内容已变化，请重新点击“规范分式”。', 'info');
+            return;
+        }
+        if (typeof result.text !== 'string') throw new Error('invalid formatting response');
+        if (result.text === source) {
+            showToast('未发现可调整的分式；仅处理完整数学环境中的标准分式。', 'info');
+            return;
+        }
+        input.value = result.text;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        if (typeof refreshEditorFeedback === 'function') refreshEditorFeedback();
+        showToast('分式已规范，请核对预览后保存。', 'success');
+    } catch (error) {
+        if (EditorState.isCurrent(session)) {
+            showToast('分式规范失败，原内容已保留，请稍后重试。', 'error');
+        }
+    } finally {
+        input.removeEventListener('input', markEdited);
+        button.disabled = false;
+        button.removeAttribute('aria-busy');
+    }
+}
+window.normalizeEditorFractions = normalizeEditorFractions;
+
         function initResizers() {
             const workspace = document.getElementById('bankWorkspaceSection');
             const sidebar = document.getElementById('sidebarSection');

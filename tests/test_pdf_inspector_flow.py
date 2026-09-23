@@ -114,7 +114,7 @@ def test_pdf_parse_system_prompt_includes_formula_and_cross_page_rules():
     prompt = build_pdf_parse_system_prompt({"必修一": {"集合": []}}, False)
     generated_prompt = build_pdf_parse_system_prompt({"必修一": {"集合": []}}, True)
     assert "\\sqrt{...}" in prompt
-    assert "\\frac{...}{...}" in prompt
+    assert "\\dfrac{...}{...}" in prompt
     assert "\\fillin" in prompt
     assert "`$x_1$`" in prompt
     assert "\\boldsymbol{a}" in prompt

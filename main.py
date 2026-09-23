@@ -76,6 +76,7 @@ from mathbank.task_manager import (
 from mathbank.docx_helper import extract_docx_markdown
 from mathbank.content_locks import lock_visible_math, restore_visible_math
 from mathbank.math_markdown import normalize_question_math_markdown
+from mathbank.fraction_style import normalize_fraction_style
 from mathbank.tex_helper import (
     MAX_TEX_BYTES,
     decode_and_prepare_tex,
@@ -731,6 +732,13 @@ def read_apple_touch_icon():
         content={"status": "error", "message": "apple touch icon not found."},
         status_code=404
     )
+
+@app.post("/api/format/fractions")
+def format_fraction_style(text: str = Form("", max_length=200000)):
+    """Format an editor snapshot without reading or writing stored questions."""
+    normalized = normalize_fraction_style(text)
+    return {"text": normalized, "changed": normalized != text}
+
 
 # ----------------- Upload API -----------------
 
